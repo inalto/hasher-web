@@ -2,6 +2,7 @@
 //! avanzamento, interruttore, toast.
 
 use super::anim;
+use super::layout;
 use super::theme::{self, pal, Palette, RADIUS_CARD, RADIUS_WIDGET};
 use egui::text::LayoutJob;
 use egui::{
@@ -49,12 +50,20 @@ pub struct HashRowOutput {
     pub copied: bool,
 }
 
+/// Sotto questa larghezza le righe hash usano la disposizione compatta (nome sopra, hash sotto).
+const NARROW_ROW: f32 = 480.0;
+
 /// Larghezza della colonna con il nome dell'algoritmo.
 const ALGO_COL: f32 = 118.0;
 
 /// Riga hash: nome algoritmo, valore esadecimale monospazio (selezionabile, a capo se serve),
 /// badge di verifica e pulsante copia.
 pub fn hash_row(ui: &mut Ui, algo: Algo, state: HashState<'_>) -> HashRowOutput {
+    // In compatto, o in una scheda stretta (tablet con il pannello Verifica aperto), l'esadecimale
+    // va sotto il nome invece di andare a capo in una colonna di poche cifre.
+    if layout::compact(ui.ctx()) || ui.available_width() < NARROW_ROW {
+        return hash_row_compact(ui, algo, state);
+    }
     let p = pal(ui);
     let mut out = HashRowOutput::default();
     let full_w = ui.available_width().max(260.0);
@@ -180,9 +189,131 @@ pub fn hash_row(ui: &mut Ui, algo: Algo, state: HashState<'_>) -> HashRowOutput 
                 let badge_c = egui::pos2(copy_rect.left() - 18.0, rect.center().y);
                 paint_verdict_dot(ui, badge_c, verdict, 11.0);
             }
+            // `put` riporta il cursore sotto il pulsante copia (centrato): con tre o più righe di
+            // esadecimale la riga successiva si sovrapporrebbe all'ultima.
+            if row_h > 60.0 {
+                ui.advance_cursor_after_rect(rect);
+            }
         }
     }
     let _ = response;
+    out
+}
+
+/// Riga hash compatta (smartphone): nome dell'algoritmo con pallino di verifica e pulsante copia
+/// sulla prima riga, esadecimale sotto a tutta larghezza (a capo in qualsiasi punto).
+fn hash_row_compact(ui: &mut Ui, algo: Algo, state: HashState<'_>) -> HashRowOutput {
+    let p = pal(ui);
+    let mut out = HashRowOutput::default();
+    let full_w = ui.available_width().max(160.0);
+    let pad_x = 8.0;
+    let head_h = 34.0;
+    let hex_w = (full_w - pad_x * 2.0).max(80.0);
+    // 12,5 px: uno SHA-1 (40 cifre) sta su una riga anche a 360 px.
+    let mono = theme::font_mono(12.5);
+    let (verdict, color) = match state {
+        HashState::Done { verdict, .. } => (
+            verdict,
+            match verdict {
+                Verdict::Match => p.success,
+                Verdict::Mismatch => p.error,
+                Verdict::None => p.text,
+            },
+        ),
+        _ => (Verdict::None, p.text),
+    };
+    let galley: Option<Arc<Galley>> = match state {
+        HashState::Done { hex, .. } => Some(wrapped_galley(ui, hex, mono.clone(), color, hex_w)),
+        _ => None,
+    };
+    let body_h = galley.as_ref().map_or(16.0, |g| g.size().y);
+    let row_h = head_h + body_h + 10.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(full_w, row_h), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return out;
+    }
+    let painter = ui.painter();
+    let row_bg = match verdict {
+        Verdict::Match => p.success_soft(),
+        Verdict::Mismatch => p.error_soft(),
+        Verdict::None => Color32::TRANSPARENT,
+    };
+    if row_bg != Color32::TRANSPARENT {
+        painter.rect_filled(rect, RADIUS_WIDGET, row_bg);
+    }
+    let name_color = match verdict {
+        Verdict::Match => p.success,
+        Verdict::Mismatch => p.error,
+        Verdict::None => p.text_muted,
+    };
+    let head_y = rect.top() + head_h / 2.0;
+    painter.text(
+        egui::pos2(rect.left() + pad_x, head_y),
+        Align2::LEFT_CENTER,
+        algo.name(),
+        theme::font_semibold(13.0),
+        name_color,
+    );
+    let body = Rect::from_min_size(
+        egui::pos2(rect.left() + pad_x, rect.top() + head_h),
+        Vec2::new(hex_w, body_h),
+    );
+    let t = anim::now(ui.ctx());
+    match state {
+        HashState::Pending => {
+            let w = skeleton_width(algo, hex_w, &mono, ui);
+            anim::shimmer_rect(
+                ui,
+                Rect::from_min_size(body.min + Vec2::new(0.0, 2.0), Vec2::new(w, 12.0)),
+                t,
+            );
+        }
+        HashState::Computing => {
+            let spin = Rect::from_center_size(egui::pos2(rect.right() - 22.0, head_y), Vec2::splat(16.0));
+            anim::paint_spinner(ui, spin, p.primary);
+            let w = skeleton_width(algo, hex_w, &mono, ui);
+            anim::shimmer_rect(
+                ui,
+                Rect::from_min_size(body.min + Vec2::new(0.0, 2.0), Vec2::new(w, 12.0)),
+                t,
+            );
+        }
+        HashState::NotComputed | HashState::Cancelled | HashState::Unavailable => {
+            let text = match state {
+                HashState::NotComputed => t!("single.not_computed").into_owned(),
+                HashState::Cancelled => t!("single.cancelled_hash").into_owned(),
+                _ => "—".to_owned(),
+            };
+            painter.text(
+                body.left_top(),
+                Align2::LEFT_TOP,
+                text,
+                theme::font_regular(13.0),
+                p.text_faint,
+            );
+        }
+        HashState::Done { hex, .. } => {
+            if let Some(g) = galley {
+                let r = Rect::from_min_size(body.min, g.size());
+                ui.put(r, Label::new(WidgetText::Galley(g)).selectable(true));
+            }
+            let copy_rect = Rect::from_center_size(egui::pos2(rect.right() - 20.0, head_y), Vec2::splat(32.0));
+            let copy = ui.put(
+                copy_rect,
+                IconButton::new(icons::COPY).size(32.0).tooltip(t!("single.copy_hash")),
+            );
+            if copy.clicked() {
+                ui.ctx().copy_text(hex.to_owned());
+                out.copied = true;
+            }
+            if verdict != Verdict::None {
+                paint_verdict_dot(ui, egui::pos2(copy_rect.left() - 14.0, head_y), verdict, 10.0);
+            }
+            // `put` riporta il cursore sotto l'ultimo widget (il pulsante copia, in alto):
+            // la riga successiva deve iniziare sotto l'esadecimale.
+            ui.advance_cursor_after_rect(rect);
+        }
+    }
     out
 }
 
@@ -232,7 +363,7 @@ pub fn card_frame(ui: &Ui) -> Frame {
         .fill(p.surface)
         .stroke(Stroke::new(1.0, p.border))
         .corner_radius(RADIUS_CARD)
-        .inner_margin(Margin::same(18))
+        .inner_margin(Margin::same(if layout::compact(ui.ctx()) { 14 } else { 18 }))
         .shadow(Shadow {
             offset: [0, 2],
             blur: 12,
@@ -359,7 +490,9 @@ pub struct InfoItem {
 pub fn info_grid(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, items: &[InfoItem]) {
     let p = pal(ui);
     let w = ui.available_width();
-    let cols = if w > 820.0 {
+    let cols = if layout::compact(ui.ctx()) {
+        1
+    } else if w > 820.0 {
         4
     } else if w > 420.0 {
         2
@@ -487,11 +620,15 @@ impl Btn {
 impl Widget for Btn {
     fn ui(self, ui: &mut Ui) -> Response {
         let p = pal(ui);
-        let (h, font_size, pad) = if self.small {
+        let (mut h, font_size, pad) = if self.small {
             (28.0, 13.0, 10.0)
         } else {
             (34.0, 14.0, 14.0)
         };
+        if layout::compact(ui.ctx()) {
+            // Bersagli di tocco di almeno 36 px.
+            h = 36.0;
+        }
         let font = theme::font_medium(font_size);
         let text_galley = ui
             .painter()
@@ -970,7 +1107,7 @@ fn toast_ui(ui: &mut Ui, t: &Toast, alpha: f32) {
                 color: p.shadow_strong,
             })
             .show(ui, |ui| {
-                ui.set_max_width(380.0);
+                ui.set_max_width(380.0_f32.min(ui.ctx().content_rect().width() - 32.0));
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
                     let (bar, _) = ui.allocate_exact_size(Vec2::new(3.0, 20.0), Sense::hover());

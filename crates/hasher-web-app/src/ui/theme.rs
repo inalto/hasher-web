@@ -378,7 +378,7 @@ pub fn visuals(p: &Palette) -> Visuals {
     v
 }
 
-fn style_tweaks(style: &mut Style, animations: bool) {
+fn style_tweaks(style: &mut Style, animations: bool, compact: bool) {
     style.text_styles = text_styles();
     let s = &mut style.spacing;
     s.item_spacing = egui::vec2(8.0, 6.0);
@@ -394,17 +394,22 @@ fn style_tweaks(style: &mut Style, animations: bool) {
     s.tooltip_width = 360.0;
     s.scroll = egui::style::ScrollStyle::floating();
     s.scroll.bar_width = 8.0;
+    if compact {
+        // Modalità compatta (smartphone): bersagli di tocco alti almeno 36 px.
+        s.interact_size = egui::vec2(36.0, 36.0);
+        s.menu_width = 240.0;
+    }
     style.animation_time = if animations { 0.18 } else { 0.0 };
     style.interaction.selectable_labels = true;
     style.url_in_tooltip = true;
 }
 
-/// Applica tema (chiaro/scuro/automatico) e stili. Chiamare all'avvio e a ogni cambio di tema
-/// o dell'impostazione delle animazioni.
-pub fn apply(ctx: &Context, mode: ThemeMode, animations: bool) {
+/// Applica tema (chiaro/scuro/automatico) e stili. Chiamare all'avvio e a ogni cambio di tema,
+/// dell'impostazione delle animazioni o della modalità compatta (`ui::layout`).
+pub fn apply(ctx: &Context, mode: ThemeMode, animations: bool, compact: bool) {
     ctx.set_visuals_of(Theme::Light, visuals(&LIGHT));
     ctx.set_visuals_of(Theme::Dark, visuals(&DARK));
-    ctx.all_styles_mut(|style| style_tweaks(style, animations));
+    ctx.all_styles_mut(|style| style_tweaks(style, animations, compact));
     let pref = match mode {
         ThemeMode::System => ThemePreference::System,
         ThemeMode::Light => ThemePreference::Light,

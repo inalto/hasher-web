@@ -52,6 +52,15 @@ funziona anche offline dopo la prima visita.
 
 Le schermate sono catturate dalla versione web in Chromium: l'interfaccia è la stessa dell'app desktop.
 
+Su smartphone (sotto i 700 px) l'interfaccia passa automaticamente al layout compatto:
+
+<p align="center">
+  <img src="docs/screenshots/mobile-empty.png" alt="Telefono: schermata iniziale" width="24%">
+  <img src="docs/screenshots/mobile-single.png" alt="Telefono: file singolo" width="24%">
+  <img src="docs/screenshots/mobile-list.png" alt="Telefono: elenco" width="24%">
+  <img src="docs/screenshots/mobile-verify.png" alt="Telefono: verifica" width="24%">
+</p>
+
 ## Privacy
 
 **Nessun file lascia il tuo computer.** Il server serve solo i file statici dell'applicazione e `/healthz`: non ha
@@ -159,7 +168,8 @@ I limiti dipendono dal browser, che non dà alle pagine web accesso al file syst
 | Parallelismo con rayon | Pool di Web Worker (al massimo 8) |
 
 L'interfaccia è disegnata su un canvas (come nell'app desktop): la selezione del testo nativa del browser e
-l'accessibilità sono limitate, e l'uso da telefono non è ottimizzato.
+l'accessibilità sono limitate. Sotto i 700 px di larghezza (telefoni) l'interfaccia passa a un layout
+compatto: menu ☰, pulsanti a tutta larghezza, hash su due righe, pannello di verifica a schermo intero.
 
 ## Compilare dal sorgente
 

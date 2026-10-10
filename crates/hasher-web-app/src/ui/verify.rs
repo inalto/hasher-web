@@ -34,6 +34,27 @@ pub(crate) fn panel(app: &mut HasherApp, ui: &mut Ui) {
     app.verify_open = open;
 }
 
+/// Modalità compatta: il pannello Verifica occupa il pannello centrale a tutta larghezza (al posto
+/// della scheda o dell'elenco) e scorre; si chiude con la ✕ dell'intestazione.
+pub(crate) fn full(app: &mut HasherApp, ui: &mut Ui) {
+    let p = pal(ui);
+    ScrollArea::vertical()
+        .id_salt("hasher.verify.full")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            Frame::new()
+                .fill(p.surface)
+                .stroke(Stroke::new(1.0, p.border))
+                .corner_radius(theme::RADIUS_CARD)
+                .inner_margin(Margin::same(14))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    content(app, ui);
+                });
+            ui.add_space(8.0);
+        });
+}
+
 fn result_card(ui: &mut Ui, color: Color32, soft: Color32, icon: &str, title: &str, add: impl FnOnce(&mut Ui)) {
     let p = pal(ui);
     Frame::new()
@@ -229,7 +250,7 @@ fn hash_result(app: &HasherApp, ui: &mut Ui) {
                         });
                     });
             } else {
-                widgets::caption(ui, t!("verify.drop_to_check"));
+                widgets::caption(ui, super::layout::touch_text("verify.drop_to_check"));
             }
         }
     }
@@ -509,6 +530,8 @@ fn checksum_section(app: &mut HasherApp, ui: &mut Ui) {
 
 fn tips(ui: &mut Ui) {
     let p = pal(ui);
+    // Su touch niente Ctrl+V, trascinamento o Ctrl+clic: suggerimenti adatti al dito.
+    let tip = super::layout::touch_text;
     Frame::new()
         .fill(p.elevated.gamma_multiply(0.5))
         .corner_radius(10)
@@ -520,17 +543,17 @@ fn tips(ui: &mut Ui) {
                 (
                     icons::CLIPBOARD_TEXT,
                     t!("verify.tip_paste_title"),
-                    t!("verify.tip_paste"),
+                    tip("verify.tip_paste"),
                 ),
                 (
                     icons::LIST_CHECKS,
                     t!("verify.tip_checksum_title"),
-                    t!("verify.tip_checksum"),
+                    tip("verify.tip_checksum"),
                 ),
                 (
                     icons::GIT_DIFF,
                     t!("verify.tip_compare_title"),
-                    t!("verify.tip_compare"),
+                    tip("verify.tip_compare"),
                 ),
             ] {
                 ui.horizontal_top(|ui| {

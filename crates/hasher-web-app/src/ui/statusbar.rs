@@ -2,15 +2,76 @@
 
 use super::anim;
 use super::format;
+use super::layout;
 use super::theme::{self, pal};
 use super::widgets::{self, Btn};
 use super::{Action, HasherApp, RunStatus};
-use egui::{Align, Frame, Layout, Margin, RichText, Ui, Vec2};
+use egui::{Align, Frame, Label, Layout, Margin, RichText, Ui, Vec2};
 use egui_phosphor::regular as icons;
 use rust_i18n::t;
 
+/// Testo di stato: in compatto viene eliso con "…" se non ci sta.
+fn status_label(ui: &mut Ui, text: RichText) {
+    if layout::compact(ui.ctx()) {
+        ui.add(Label::new(text).truncate());
+    } else {
+        ui.label(text);
+    }
+}
+
+/// Barra di stato compatta: niente credito, avanzamento ridotto a percentuale e barra corta,
+/// pulsanti a sola icona; il testo di stato occupa lo spazio che resta.
+fn show_compact(app: &mut HasherApp, ui: &mut Ui) {
+    let p = pal(ui);
+    egui::Panel::bottom("hasher.statusbar")
+        .exact_size(40.0)
+        .frame(Frame::new().fill(p.surface).inner_margin(Margin::symmetric(12, 0)))
+        .show(ui, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if app.is_running() {
+                        if ui
+                            .add(Btn::danger(String::new()).icon(icons::STOP_CIRCLE).small())
+                            .on_hover_text(t!("status.cancel"))
+                            .clicked()
+                        {
+                            app.actions.push(Action::Cancel);
+                        }
+                        let fraction = if app.bytes_total == 0 && app.files_total == 0 {
+                            None
+                        } else {
+                            Some(app.fraction)
+                        };
+                        widgets::progress_bar(ui, fraction, 64.0, 8.0, true);
+                        ui.label(
+                            RichText::new(format::percent(app.fraction))
+                                .font(theme::font_semibold(12.5))
+                                .color(p.primary),
+                        );
+                    } else if app.cancelled_count() > 0
+                        && ui
+                            .add(Btn::secondary(String::new()).icon(icons::ARROW_CLOCKWISE).small())
+                            .on_hover_text(t!("app.resume_tooltip"))
+                            .clicked()
+                    {
+                        app.actions.push(Action::ResumeCancelled);
+                    }
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        status_text(app, ui);
+                    });
+                });
+            });
+        });
+}
+
 pub(crate) fn show(app: &mut HasherApp, ui: &mut Ui) {
     let p = pal(ui);
+    if layout::compact(ui.ctx()) {
+        show_compact(app, ui);
+        return;
+    }
     egui::Panel::bottom("hasher.statusbar")
         .exact_size(40.0)
         .frame(Frame::new().fill(p.surface).inner_margin(Margin::symmetric(16, 0)))
@@ -60,7 +121,7 @@ fn status_text(app: &HasherApp, ui: &mut Ui) {
     if app.is_exploring() && !app.is_running() {
         // Cartelle trascinate ancora in esplorazione (prima dell'avvio del calcolo).
         anim::spinner_ring(ui, 16.0, p.primary);
-        ui.label(RichText::new(t!("status.scanning")).font(font).color(p.text));
+        status_label(ui, RichText::new(t!("status.scanning")).font(font).color(p.text));
         return;
     }
     match &app.status {
@@ -73,7 +134,7 @@ fn status_text(app: &HasherApp, ui: &mut Ui) {
                 let key = super::format::plural_key("status.computing", app.files_total as usize);
                 t!(key, done = done.round() as u64, total = app.files_total).into_owned()
             };
-            ui.label(RichText::new(text).font(font).color(p.text));
+            status_label(ui, RichText::new(text).font(font).color(p.text));
         }
         RunStatus::Done {
             ok,
@@ -111,7 +172,7 @@ fn status_text(app: &HasherApp, ui: &mut Ui) {
                 )
             };
             ui.label(RichText::new(icon).font(theme::font_icon(16.0)).color(color));
-            ui.label(RichText::new(text).font(font).color(p.text));
+            status_label(ui, RichText::new(text).font(font).color(p.text));
         }
         RunStatus::Idle => {
             let (dot, _) = ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
@@ -127,7 +188,7 @@ fn status_text(app: &HasherApp, ui: &mut Ui) {
                 )
                 .into_owned()
             };
-            ui.label(RichText::new(text).font(font).color(p.text_muted));
+            status_label(ui, RichText::new(text).font(font).color(p.text_muted));
         }
     }
 }

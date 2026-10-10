@@ -155,51 +155,60 @@ pub(crate) fn show(app: &mut HasherApp, ui: &mut Ui) {
 
 fn header_card(app: &mut HasherApp, ui: &mut Ui) {
     let p = pal(ui);
+    let compact = super::layout::compact(ui.ctx());
     let entry = &app.entries[0];
     let id = entry.id;
     widgets::card(ui, |ui| {
         ui.set_width(ui.available_width());
-        ui.horizontal_top(|ui| {
-            let icon = widgets::file_icon(entry.extension.as_deref());
-            widgets::icon_tile(ui, icon, 52.0, p.primary, p.primary_soft());
-            ui.add_space(6.0);
-            let right_w = 170.0;
-            let text_w = (ui.available_width() - right_w).max(120.0);
-            ui.allocate_ui_with_layout(Vec2::new(text_w, 0.0), Layout::top_down(Align::Min), |ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
-                ui.add(
-                    Label::new(
-                        RichText::new(&entry.name)
-                            .font(theme::font_semibold(21.0))
-                            .color(p.text),
-                    )
-                    .wrap(),
-                );
-                // Percorso relativo alla cartella trascinata (per un file singolo coincide col nome).
-                let rel = entry.path.to_string_lossy();
-                if rel != entry.name.as_str() {
-                    ui.add(Label::new(RichText::new(rel).font(theme::font_regular(13.0)).color(p.text_muted)).wrap());
-                }
-                ui.add_space(4.0);
-                status_badge(entry, ui);
+        if compact {
+            if header_compact(entry, ui) {
+                app.actions.push(Action::ResumeCancelled);
+            }
+        } else {
+            ui.horizontal_top(|ui| {
+                let icon = widgets::file_icon(entry.extension.as_deref());
+                widgets::icon_tile(ui, icon, 52.0, p.primary, p.primary_soft());
+                ui.add_space(6.0);
+                let right_w = 170.0;
+                let text_w = (ui.available_width() - right_w).max(120.0);
+                ui.allocate_ui_with_layout(Vec2::new(text_w, 0.0), Layout::top_down(Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    ui.add(
+                        Label::new(
+                            RichText::new(&entry.name)
+                                .font(theme::font_semibold(21.0))
+                                .color(p.text),
+                        )
+                        .wrap(),
+                    );
+                    // Percorso relativo alla cartella trascinata (per un file singolo coincide col nome).
+                    let rel = entry.path.to_string_lossy();
+                    if rel != entry.name.as_str() {
+                        ui.add(
+                            Label::new(RichText::new(rel).font(theme::font_regular(13.0)).color(p.text_muted)).wrap(),
+                        );
+                    }
+                    ui.add_space(4.0);
+                    status_badge(entry, ui);
+                });
+                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                    if matches!(entry.state, EntryState::Cancelled)
+                        && ui
+                            .add(Btn::primary(t!("app.resume")).icon(icons::ARROW_CLOCKWISE).small())
+                            .clicked()
+                    {
+                        app.actions.push(Action::ResumeCancelled);
+                    }
+                });
             });
-            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                if matches!(entry.state, EntryState::Cancelled)
-                    && ui
-                        .add(Btn::primary(t!("app.resume")).icon(icons::ARROW_CLOCKWISE).small())
-                        .clicked()
-                {
-                    app.actions.push(Action::ResumeCancelled);
-                }
-            });
-        });
+        }
 
         if let EntryState::Computing { bytes_done, started } = entry.state {
             ui.add_space(14.0);
             let frac = entry.fraction();
             let elapsed = (super::anim::now(ui.ctx()) - started).max(0.001);
             let speed = bytes_done as f64 / elapsed;
-            ui.horizontal(|ui| {
+            let row = |ui: &mut Ui| {
                 ui.label(
                     RichText::new(format::percent(frac))
                         .font(theme::font_semibold(13.0))
@@ -215,7 +224,13 @@ fn header_card(app: &mut HasherApp, ui: &mut Ui) {
                     .font(theme::font_regular(12.5))
                     .color(p.text_muted),
                 );
-            });
+            };
+            // In compatto il dettaglio va a capo invece di uscire dalla scheda.
+            if compact {
+                ui.horizontal_wrapped(row);
+            } else {
+                ui.horizontal(row);
+            }
             ui.add_space(4.0);
             let w = ui.available_width();
             widgets::progress_bar(ui, Some(frac), w, 8.0, true);
@@ -267,11 +282,79 @@ fn status_badge(entry: &FileEntry, ui: &mut Ui) {
     }
 }
 
+/// Intestazione compatta: tessera 40 px, nome che va a capo, percorso, stato e "Riprendi".
+/// Restituisce `true` se è stato premuto "Riprendi".
+fn header_compact(entry: &FileEntry, ui: &mut Ui) -> bool {
+    let p = pal(ui);
+    let mut resume = false;
+    ui.horizontal_top(|ui| {
+        let icon = widgets::file_icon(entry.extension.as_deref());
+        widgets::icon_tile(ui, icon, 40.0, p.primary, p.primary_soft());
+        ui.add_space(2.0);
+        ui.allocate_ui_with_layout(
+            Vec2::new(ui.available_width(), 0.0),
+            Layout::top_down(Align::Min),
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.add(
+                    Label::new(
+                        RichText::new(&entry.name)
+                            .font(theme::font_semibold(18.0))
+                            .color(p.text),
+                    )
+                    .wrap(),
+                );
+                let rel = entry.path.to_string_lossy();
+                if rel != entry.name.as_str() {
+                    ui.add(Label::new(RichText::new(rel).font(theme::font_regular(12.5)).color(p.text_muted)).wrap());
+                }
+                ui.add_space(2.0);
+                status_badge(entry, ui);
+                if matches!(entry.state, EntryState::Cancelled) {
+                    ui.add_space(4.0);
+                    resume = ui
+                        .add(Btn::primary(t!("app.resume")).icon(icons::ARROW_CLOCKWISE).small())
+                        .clicked();
+                }
+            },
+        );
+    });
+    resume
+}
+
 fn hashes_card(app: &mut HasherApp, ui: &mut Ui) {
     let p = pal(ui);
     let done = app.entries[0].is_done();
     let id = app.entries[0].id;
     let n = app.shown_algos().len();
+    if super::layout::compact(ui.ctx()) {
+        widgets::card(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                widgets::section_title(ui, icons::FINGERPRINT, t!("single.hashes_title"));
+                widgets::badge(ui, t!(format::plural_key("app.algos_count", n), n = n), p.accent);
+            });
+            ui.add_space(6.0);
+            // "Copia tutti" ed "Esporta…" su una riga propria (in 360 px non stanno col titolo).
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(done, Btn::ghost(t!("single.copy_all")).icon(icons::COPY).small())
+                    .clicked()
+                {
+                    app.actions.push(Action::CopyAll(id));
+                }
+                if ui
+                    .add_enabled(done, Btn::secondary(t!("single.export")).icon(icons::EXPORT).small())
+                    .clicked()
+                {
+                    app.actions.push(Action::ShowExport);
+                }
+            });
+            ui.add_space(8.0);
+            hash_rows(app, ui, 0);
+        });
+        return;
+    }
     widgets::card(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {

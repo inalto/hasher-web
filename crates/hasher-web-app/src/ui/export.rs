@@ -1,11 +1,12 @@
 //! Finestra di esportazione: scelta del formato, documento prodotto in memoria
 //! (`export_to_vec`) e offerto come download dal browser.
 
+use super::layout;
 use super::theme::{self, pal, RADIUS_WIDGET};
 use super::widgets::{self, Btn, ToastKind};
 use super::HasherApp;
 use crate::settings::Settings;
-use egui::{Align, Align2, Context, Id, Layout, RichText, Sense, Stroke, StrokeKind, Vec2};
+use egui::{Align, Align2, Context, Id, Layout, RichText, Sense, Stroke, StrokeKind, Ui, Vec2};
 use egui_phosphor::regular as icons;
 use hasher_core::algo::Algo;
 use hasher_core::export::{export_to_vec, ExportFormat, ExportLabels, ExportOptions};
@@ -121,95 +122,27 @@ pub(crate) fn window(app: &mut HasherApp, ctx: &Context) {
         .collapsible(false)
         .resizable(false)
         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        .constrain(true)
         .open(&mut open)
         .show(ctx, |ui| {
-            let p = pal(ui);
-            ui.set_width(460.0);
+            ui.set_width(layout::window_width(ctx, 460.0 + 36.0) - 36.0);
             let dlg = &mut app.ui.export;
             let n = if dlg.selected_only { n_sel } else { n_all };
             widgets::caption(ui, t!(super::format::plural_key("export.subtitle", n), n = n));
             ui.add_space(10.0);
-
-            for i in 0..CHOICES {
-                let f = if i < ExportFormat::BASIC.len() {
-                    ExportFormat::BASIC[i]
-                } else {
-                    ExportFormat::Checksum(dlg.checksum_algo)
-                };
-                let selected = dlg.choice == i;
-                let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 50.0), Sense::click());
-                if resp.clicked() {
-                    dlg.choice = i;
-                }
-                if ui.is_rect_visible(rect) {
-                    let fill = if selected {
-                        p.primary_soft()
-                    } else if resp.hovered() {
-                        p.elevated.gamma_multiply(0.7)
-                    } else {
-                        egui::Color32::TRANSPARENT
-                    };
-                    let stroke = if selected {
-                        Stroke::new(1.5, p.primary)
-                    } else {
-                        Stroke::new(1.0, p.border)
-                    };
-                    ui.painter().rect(rect, RADIUS_WIDGET, fill, stroke, StrokeKind::Inside);
-                    let icon_c = egui::pos2(rect.left() + 26.0, rect.center().y);
-                    ui.painter().text(
-                        icon_c,
-                        Align2::CENTER_CENTER,
-                        format_icon(f),
-                        theme::font_icon(22.0),
-                        if selected { p.primary } else { p.accent },
-                    );
-                    ui.painter().text(
-                        egui::pos2(rect.left() + 50.0, rect.center().y - 8.0),
-                        Align2::LEFT_CENTER,
-                        t!(format!("export.format.{}", f.id())),
-                        theme::font_semibold(14.0),
-                        p.text,
-                    );
-                    ui.painter().text(
-                        egui::pos2(rect.left() + 50.0, rect.center().y + 9.0),
-                        Align2::LEFT_CENTER,
-                        t!(format!("export.format_desc.{}", f.id())),
-                        theme::font_regular(12.0),
-                        p.text_muted,
-                    );
-                    // Indicatore radio a destra.
-                    let c = egui::pos2(rect.right() - 20.0, rect.center().y);
-                    ui.painter().circle_stroke(
-                        c,
-                        8.0,
-                        Stroke::new(1.5, if selected { p.primary } else { p.border_strong }),
-                    );
-                    if selected {
-                        ui.painter().circle_filled(c, 4.5, p.primary);
-                    }
-                }
-                ui.add_space(4.0);
-            }
-
-            if dlg.choice == ExportFormat::BASIC.len() {
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(t!("export.checksum_algo")).color(p.text_muted));
-                    egui::ComboBox::from_id_salt("hasher.export.algo")
-                        .selected_text(dlg.checksum_algo.name())
-                        .width(170.0)
-                        .icon(widgets::combo_caret)
-                        .show_ui(ui, |ui| {
-                            for a in &computed {
-                                ui.selectable_value(&mut dlg.checksum_algo, *a, a.name());
-                            }
-                        });
-                });
-            }
-
-            if dlg.has_selection {
-                ui.add_space(6.0);
-                widgets::check(ui, &mut dlg.selected_only, t!("export.selected_only", n = n_sel));
+            // Su schermi piccoli formati e opzioni scorrono; i pulsanti restano visibili.
+            let scroll = layout::compact(ctx) || layout::short(ctx);
+            let max_h = (layout::max_window_height(ctx) - 150.0).max(120.0);
+            let mut options = |ui: &mut Ui| {
+                format_choices(ui, dlg, &computed, n_sel);
+            };
+            if scroll {
+                egui::ScrollArea::vertical()
+                    .id_salt("hasher.export.scroll")
+                    .max_height(max_h)
+                    .show(ui, options);
+            } else {
+                options(ui);
             }
 
             ui.add_space(14.0);
@@ -232,6 +165,116 @@ pub(crate) fn window(app: &mut HasherApp, ctx: &Context) {
     if go {
         app.ui.export_open = false;
         run_export(app, ctx);
+    }
+}
+
+/// Elenco dei formati e opzioni (algoritmo del file di checksum, solo selezionati).
+fn format_choices(ui: &mut Ui, dlg: &mut ExportDialog, computed: &[Algo], n_sel: usize) {
+    let p = pal(ui);
+    let compact = layout::compact(ui.ctx());
+    for i in 0..CHOICES {
+        let f = if i < ExportFormat::BASIC.len() {
+            ExportFormat::BASIC[i]
+        } else {
+            ExportFormat::Checksum(dlg.checksum_algo)
+        };
+        let selected = dlg.choice == i;
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 50.0), Sense::click());
+        if resp.clicked() {
+            dlg.choice = i;
+        }
+        if ui.is_rect_visible(rect) {
+            let fill = if selected {
+                p.primary_soft()
+            } else if resp.hovered() {
+                p.elevated.gamma_multiply(0.7)
+            } else {
+                egui::Color32::TRANSPARENT
+            };
+            let stroke = if selected {
+                Stroke::new(1.5, p.primary)
+            } else {
+                Stroke::new(1.0, p.border)
+            };
+            ui.painter().rect(rect, RADIUS_WIDGET, fill, stroke, StrokeKind::Inside);
+            let icon_c = egui::pos2(rect.left() + 26.0, rect.center().y);
+            ui.painter().text(
+                icon_c,
+                Align2::CENTER_CENTER,
+                format_icon(f),
+                theme::font_icon(22.0),
+                if selected { p.primary } else { p.accent },
+            );
+            if compact {
+                // Testi troncati con "…" per non finire sotto l'indicatore radio.
+                let text_w = rect.width() - 50.0 - 40.0;
+                for (text, font, color, dy) in [
+                    (
+                        t!(format!("export.format.{}", f.id())),
+                        theme::font_semibold(14.0),
+                        p.text,
+                        -8.0,
+                    ),
+                    (
+                        t!(format!("export.format_desc.{}", f.id())),
+                        theme::font_regular(12.0),
+                        p.text_muted,
+                        9.0,
+                    ),
+                ] {
+                    let g = widgets::truncated_galley(ui, &text, font, color, text_w);
+                    let pos = egui::pos2(rect.left() + 50.0, rect.center().y + dy - g.size().y / 2.0);
+                    ui.painter().galley(pos, g, color);
+                }
+            } else {
+                ui.painter().text(
+                    egui::pos2(rect.left() + 50.0, rect.center().y - 8.0),
+                    Align2::LEFT_CENTER,
+                    t!(format!("export.format.{}", f.id())),
+                    theme::font_semibold(14.0),
+                    p.text,
+                );
+                ui.painter().text(
+                    egui::pos2(rect.left() + 50.0, rect.center().y + 9.0),
+                    Align2::LEFT_CENTER,
+                    t!(format!("export.format_desc.{}", f.id())),
+                    theme::font_regular(12.0),
+                    p.text_muted,
+                );
+            }
+            // Indicatore radio a destra.
+            let c = egui::pos2(rect.right() - 20.0, rect.center().y);
+            ui.painter().circle_stroke(
+                c,
+                8.0,
+                Stroke::new(1.5, if selected { p.primary } else { p.border_strong }),
+            );
+            if selected {
+                ui.painter().circle_filled(c, 4.5, p.primary);
+            }
+        }
+        ui.add_space(4.0);
+    }
+
+    if dlg.choice == ExportFormat::BASIC.len() {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(t!("export.checksum_algo")).color(p.text_muted));
+            egui::ComboBox::from_id_salt("hasher.export.algo")
+                .selected_text(dlg.checksum_algo.name())
+                .width(170.0)
+                .icon(widgets::combo_caret)
+                .show_ui(ui, |ui| {
+                    for a in computed {
+                        ui.selectable_value(&mut dlg.checksum_algo, *a, a.name());
+                    }
+                });
+        });
+    }
+
+    if dlg.has_selection {
+        ui.add_space(6.0);
+        widgets::check(ui, &mut dlg.selected_only, t!("export.selected_only", n = n_sel));
     }
 }
 

@@ -168,6 +168,31 @@ pub fn canvas() -> Option<web_sys::HtmlCanvasElement> {
     document()?.get_element_by_id(CANVAS_ID)?.dyn_into().ok()
 }
 
+/// Corregge la risoluzione del canvas se è chiaramente incoerente con la dimensione CSS × DPR.
+///
+/// eframe la ricava da `ResizeObserverEntry.devicePixelContentBoxSize`, che in alcuni ambienti
+/// (es. l'emulazione dei dispositivi di Chromium) riporta pixel CSS invece che fisici: l'interfaccia
+/// risulterebbe ingrandita di DPR volte. Restituisce `true` se ha corretto (serve un repaint).
+pub fn fix_canvas_resolution() -> bool {
+    let (Some(w), Some(c)) = (window(), canvas()) else {
+        return false;
+    };
+    let dpr = w.device_pixel_ratio();
+    let want_w = (f64::from(c.client_width()) * dpr).round();
+    let want_h = (f64::from(c.client_height()) * dpr).round();
+    if want_w < 1.0 || want_h < 1.0 {
+        return false;
+    }
+    // Tolleranza ampia: si corregge solo l'errore grossolano, mai l'arrotondamento dei pixel.
+    let off = |have: u32, want: f64| (f64::from(have) - want).abs() > (want * 0.1).max(2.0);
+    if off(c.width(), want_w) || off(c.height(), want_h) {
+        c.set_width(want_w as u32);
+        c.set_height(want_h as u32);
+        return true;
+    }
+    false
+}
+
 /// Dà il focus al canvas: senza focus eframe ignora tastiera e `paste`.
 pub fn focus_canvas() {
     if let Some(c) = canvas() {

@@ -1,5 +1,6 @@
 //! Finestra di aiuto: guida, scorciatoie da tastiera, informazioni e licenze.
 
+use super::layout;
 use super::theme::{self, pal};
 use super::widgets;
 use super::{HasherApp, HelpTab};
@@ -15,13 +16,16 @@ pub(crate) fn window(app: &mut HasherApp, ctx: &Context) {
     }
     let mut open = true;
     let screen = ctx.content_rect();
-    let height = (screen.height() - 120.0).clamp(320.0, 600.0);
+    // Sul desktop identica a prima; su schermi bassi o stretti si adatta.
+    let height = (screen.height() - 120.0).clamp(140.0, 600.0);
+    let width = layout::window_width(ctx, 640.0 + 36.0) - 36.0;
     egui::Window::new(RichText::new(t!("help.title")).font(theme::font_semibold(17.0)))
         .id(Id::new("hasher.help.window"))
         .collapsible(false)
         .resizable(false)
         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .fixed_size(Vec2::new(640.0, height))
+        .constrain(true)
+        .fixed_size(Vec2::new(width, height))
         .open(&mut open)
         .show(ctx, |ui| {
             tabs(ui, &mut app.ui.help_tab);
@@ -52,11 +56,14 @@ fn tabs(ui: &mut Ui, tab: &mut HelpTab) {
         (HelpTab::About, icons::INFO, t!("help.tab_about")),
     ];
     let total_w = ui.available_width();
-    let (bar, _) = ui.allocate_exact_size(Vec2::new(total_w, 38.0), Sense::hover());
+    // In compatto icona sopra e nome sotto (in 360 px tre etichette affiancate non stanno).
+    let stacked = layout::compact(ui.ctx());
+    let (bar_h, seg_h) = if stacked { (54.0, 46.0) } else { (38.0, 30.0) };
+    let (bar, _) = ui.allocate_exact_size(Vec2::new(total_w, bar_h), Sense::hover());
     ui.painter().rect_filled(bar, 10, p.elevated);
     let w = (bar.width() - 8.0) / items.len() as f32;
     for (i, (t, icon, label)) in items.into_iter().enumerate() {
-        let r = egui::Rect::from_min_size(bar.min + Vec2::new(4.0 + i as f32 * w, 4.0), Vec2::new(w, 30.0));
+        let r = egui::Rect::from_min_size(bar.min + Vec2::new(4.0 + i as f32 * w, 4.0), Vec2::new(w, seg_h));
         let resp = ui.interact(r, Id::new(("hasher.help.tab", i)), Sense::click());
         if resp.clicked() {
             *tab = t;
@@ -76,6 +83,22 @@ fn tabs(ui: &mut Ui, tab: &mut HelpTab) {
         let text_g = ui
             .painter()
             .layout_no_wrap(label.into_owned(), theme::font_medium(13.5), color);
+        if stacked {
+            let small = ui
+                .painter()
+                .layout_no_wrap(text_g.text().to_owned(), theme::font_medium(11.5), color);
+            if small.size().x <= r.width() - 6.0 {
+                let icon_pos = egui::pos2(r.center().x - icon_g.size().x / 2.0, r.top() + 5.0);
+                ui.painter().galley(icon_pos, icon_g, color);
+                let text_pos = egui::pos2(r.center().x - small.size().x / 2.0, r.bottom() - small.size().y - 5.0);
+                ui.painter().galley(text_pos, small, color);
+            } else {
+                // Troppo stretta anche così: solo l'icona, il nome nel suggerimento.
+                ui.painter().galley(r.center() - icon_g.size() / 2.0, icon_g, color);
+                let _ = resp.on_hover_text(text_g.text());
+            }
+            continue;
+        }
         let w_all = icon_g.size().x + 7.0 + text_g.size().x;
         let x = r.center().x - w_all / 2.0;
         ui.painter().galley(
@@ -134,6 +157,7 @@ fn guide(ui: &mut Ui) {
 
 fn shortcuts(ui: &mut Ui) {
     let p = pal(ui);
+    let compact = layout::compact(ui.ctx());
     let is_mac = ui.ctx().os() == egui::os::OperatingSystem::Mac;
     let cmd = if is_mac { "⌘" } else { "Ctrl" };
     let shift = "Shift";
@@ -168,6 +192,14 @@ fn shortcuts(ui: &mut Ui) {
                         .hline(r.x_range(), r.top(), Stroke::new(1.0, p.border.gamma_multiply(0.7)));
                     ui.add_space(1.0);
                 }
+                if compact {
+                    // Tasti sopra, descrizione sotto.
+                    ui.add_space(4.0);
+                    widgets::shortcut_keys(ui, keys);
+                    ui.add(Label::new(RichText::new(text).font(theme::font_regular(13.5)).color(p.text)).wrap());
+                    ui.add_space(4.0);
+                    continue;
+                }
                 ui.horizontal(|ui| {
                     ui.set_min_height(34.0);
                     ui.allocate_ui_with_layout(Vec2::new(210.0, 30.0), Layout::left_to_right(Align::Center), |ui| {
@@ -182,13 +214,20 @@ fn shortcuts(ui: &mut Ui) {
 
 fn about(ui: &mut Ui) {
     let p = pal(ui);
+    let compact = layout::compact(ui.ctx());
     ui.vertical_centered(|ui| {
         ui.add_space(6.0);
+        // In compatto il logo si riduce alla larghezza disponibile.
+        let scale = if compact {
+            (ui.available_width() / 300.0).min(1.0)
+        } else {
+            1.0
+        };
         if ui.visuals().dark_mode {
             // In tema scuro si usa la versione invertita del logo, che porta con sé il proprio sfondo.
             ui.add(
                 egui::Image::new(egui::include_image!("../../assets/brand/logo-inverted.svg"))
-                    .fit_to_exact_size(Vec2::new(300.0, 200.0))
+                    .fit_to_exact_size(Vec2::new(300.0, 200.0) * scale)
                     .corner_radius(14),
             );
         } else {
@@ -201,7 +240,7 @@ fn about(ui: &mut Ui) {
                 .show(ui, |ui| {
                     ui.add(
                         egui::Image::new(egui::include_image!("../../assets/brand/logo.svg"))
-                            .fit_to_exact_size(Vec2::new(240.0, 98.0)),
+                            .fit_to_exact_size(Vec2::new(240.0, 98.0) * scale),
                     );
                 });
         }
@@ -258,6 +297,12 @@ fn about(ui: &mut Ui) {
             for (i, (name, licence)) in components.iter().enumerate() {
                 if i > 0 {
                     ui.separator();
+                }
+                if compact {
+                    // Nome (a capo se serve) e licenza sotto.
+                    ui.add(Label::new(RichText::new(*name).font(theme::font_regular(13.5)).color(p.text)).wrap());
+                    widgets::badge(ui, *licence, p.accent);
+                    continue;
                 }
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(*name).font(theme::font_regular(13.5)).color(p.text));

@@ -25,7 +25,9 @@ un contenitore Docker dietro a un reverse proxy e serve soltanto file statici.
 | PWA | `manifest.webmanifest` (standalone, icone maskable, `file_handlers` per i file di checksum), service worker con precache versionata (offline), `launchQueue` | installabile e utilizzabile offline dopo la prima visita |
 
 Limiti noti e accettati dell'interfaccia su canvas (gli stessi del desktop egui): niente selezione
-del testo nativa del browser, accessibilità ridotta, uso da mobile non ottimizzato.
+del testo nativa del browser, accessibilità ridotta. Sotto i 700 px di larghezza (telefoni) l'interfaccia usa un
+layout compatto (`ui/layout.rs`: menu ☰, viste impilate, verifica a schermo intero, finestre entro lo schermo); su
+touch i testi non parlano di trascinamento né di Ctrl/Shift.
 
 Verificato nel sorgente di eframe 0.36.2 (`~/.cargo/registry/src/*/eframe-0.36.2/src/web/`):
 - i file trascinati arrivano in `RawInput::dropped_files` come `Arc<dyn egui::DroppedFile>` con

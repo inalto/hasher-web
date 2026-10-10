@@ -25,16 +25,22 @@ const PAD: f32 = 14.0;
 
 /// Posizioni orizzontali delle colonne (relative al bordo sinistro della tabella).
 struct Cols {
+    /// Margine orizzontale della tabella (righe separatrici, dettaglio espanso).
+    pad: f32,
     status: (f32, f32),
     name: (f32, f32),
     size: (f32, f32),
     modified: Option<(f32, f32)>,
-    hash: (f32, f32),
+    /// Assente in modalità compatta: gli hash si vedono nel dettaglio espanso.
+    hash: Option<(f32, f32)>,
     expand: (f32, f32),
 }
 
 impl Cols {
-    fn new(width: f32) -> Cols {
+    fn new(width: f32, compact: bool) -> Cols {
+        if compact {
+            return Cols::compact(width);
+        }
         let status_w = 34.0;
         let size_w = 92.0;
         let expand_w = 40.0;
@@ -63,14 +69,42 @@ impl Cols {
         let name = take(name_w);
         let size = take(size_w);
         let modified = if modified_w > 0.0 { Some(take(modified_w)) } else { None };
-        let hash = take(hash_w);
+        let hash = Some(take(hash_w));
         let expand = take(expand_w);
         Cols {
+            pad: PAD,
             status,
             name,
             size,
             modified,
             hash,
+            expand,
+        }
+    }
+
+    /// Colonne compatte: stato, nome (con cartella sotto), dimensione, espandi.
+    fn compact(width: f32) -> Cols {
+        let pad = 8.0;
+        let gap = 8.0;
+        let (status_w, size_w, expand_w) = (26.0, 68.0, 36.0);
+        let name_w = (width - pad * 2.0 - status_w - size_w - expand_w - gap * 3.0).max(80.0);
+        let mut x = pad;
+        let mut take = |w: f32| {
+            let r = (x, x + w);
+            x += w + gap;
+            r
+        };
+        let status = take(status_w);
+        let name = take(name_w);
+        let size = take(size_w);
+        let expand = take(expand_w);
+        Cols {
+            pad,
+            status,
+            name,
+            size,
+            modified: None,
+            hash: None,
             expand,
         }
     }
@@ -103,6 +137,10 @@ pub(crate) fn show(app: &mut HasherApp, ui: &mut Ui) {
 }
 
 fn toolbar(app: &mut HasherApp, ui: &mut Ui) {
+    if super::layout::compact(ui.ctx()) {
+        toolbar_compact(app, ui);
+        return;
+    }
     let p = pal(ui);
     let total: u64 = app.entries.iter().map(|e| e.size).sum();
     let selected = app.entries.iter().filter(|e| e.selected).count();
@@ -189,6 +227,85 @@ fn toolbar(app: &mut HasherApp, ui: &mut Ui) {
     });
 }
 
+/// Barra compatta: conteggio e dimensione con le azioni a sola icona, filtro a tutta larghezza
+/// sulla riga successiva.
+fn toolbar_compact(app: &mut HasherApp, ui: &mut Ui) {
+    let p = pal(ui);
+    let total: u64 = app.entries.iter().map(|e| e.size).sum();
+    let selected = app.entries.iter().filter(|e| e.selected).count();
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let count = anim::animated_number(ui.ctx(), Id::new("hasher.list.count"), app.entries.len() as f64);
+        let n = count.round() as usize;
+        ui.label(
+            RichText::new(t!(super::format::plural_key("list.files_count", n), n = n))
+                .font(theme::font_semibold(16.0))
+                .color(p.text),
+        );
+        widgets::badge(ui, super::format::size(total), p.accent);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            if ui
+                .add(IconButton::new(icons::BROOM).size(36.0).tooltip(t!("list.clear")))
+                .clicked()
+            {
+                app.actions.push(Action::ClearList);
+            }
+            let export = ui.add_enabled(
+                app.any_done(),
+                IconButton::new(icons::EXPORT).size(36.0).tooltip(t!("list.export")),
+            );
+            if export.clicked() {
+                app.actions.push(Action::ShowExport);
+            }
+            if selected > 0
+                && ui
+                    .add(
+                        IconButton::new(icons::TRASH)
+                            .size(36.0)
+                            .tooltip(t!("list.remove_selected")),
+                    )
+                    .clicked()
+            {
+                app.actions.push(Action::RemoveSelected);
+            }
+            let cancelled = app.cancelled_count();
+            if cancelled > 0
+                && !app.is_running()
+                && ui
+                    .add(
+                        IconButton::new(icons::ARROW_CLOCKWISE)
+                            .size(36.0)
+                            .tooltip(t!("app.resume_tooltip")),
+                    )
+                    .clicked()
+            {
+                app.actions.push(Action::ResumeCancelled);
+            }
+        });
+    });
+    if selected > 0 {
+        widgets::badge(
+            ui,
+            t!(super::format::plural_key("list.selected_count", selected), n = selected),
+            p.primary,
+        );
+    }
+    ui.add_space(4.0);
+    ui.add(
+        TextEdit::singleline(&mut app.ui.filter)
+            .id(Id::new("hasher.list.filter"))
+            .hint_text(t!("list.filter_hint"))
+            .prefix(
+                RichText::new(icons::MAGNIFYING_GLASS)
+                    .font(theme::font_icon(15.0))
+                    .color(p.text_muted),
+            )
+            .desired_width(f32::INFINITY)
+            .margin(Margin::symmetric(8, 8)),
+    );
+}
+
 /// Selettore dell'algoritmo mostrato nella colonna hash (nell'intestazione della tabella).
 fn column_algo_combo(app: &mut HasherApp, ui: &mut Ui, rect: Rect) {
     let p = pal(ui);
@@ -223,7 +340,9 @@ fn column_algo_combo(app: &mut HasherApp, ui: &mut Ui, rect: Rect) {
 fn table(app: &mut HasherApp, ui: &mut Ui) {
     let p = pal(ui);
     let full = ui.max_rect();
-    let cols = Cols::new(full.width());
+    // Colonne compatte anche in una tabella stretta (es. telefono in orizzontale con la Verifica
+    // aperta): la colonna hash non ci starebbe e gli hash restano nel dettaglio espanso.
+    let cols = Cols::new(full.width(), super::layout::compact(ui.ctx()) || full.width() < 540.0);
 
     // Intestazione.
     let (header, _) = ui.allocate_exact_size(Vec2::new(full.width(), HEADER_H), Sense::hover());
@@ -253,7 +372,9 @@ fn table(app: &mut HasherApp, ui: &mut Ui) {
     if let Some(m) = cols.modified {
         head(ui, m, t!("list.col_modified").to_uppercase(), Align2::LEFT_CENTER);
     }
-    column_algo_combo(app, ui, col_rect(header, cols.hash));
+    if let Some(h) = cols.hash {
+        column_algo_combo(app, ui, col_rect(header, h));
+    }
 
     // Righe filtrate.
     let filter = app.ui.filter.trim().to_lowercase();
@@ -341,15 +462,17 @@ fn scanning_placeholder(ui: &mut Ui, cols: &Cols) {
             ),
             t,
         );
-        let hash = col_rect(r, cols.hash);
-        anim::shimmer_rect(
-            &ui2,
-            Rect::from_min_size(
-                Pos2::new(hash.left(), r.center().y - 5.0),
-                Vec2::new(hash.width() * 0.8, 10.0),
-            ),
-            t,
-        );
+        if let Some(h) = cols.hash {
+            let hash = col_rect(r, h);
+            anim::shimmer_rect(
+                &ui2,
+                Rect::from_min_size(
+                    Pos2::new(hash.left(), r.center().y - 5.0),
+                    Vec2::new(hash.width() * 0.8, 10.0),
+                ),
+                t,
+            );
+        }
         ui2.painter()
             .hline(r.x_range(), r.bottom(), Stroke::new(1.0, p.border.gamma_multiply(0.6)));
     }
@@ -409,7 +532,7 @@ fn row(
     }
     if !is_last || expanded {
         ui.painter().hline(
-            rect.x_range().shrink(PAD),
+            rect.x_range().shrink(cols.pad),
             rect.bottom() - 0.5,
             Stroke::new(1.0, p.border.gamma_multiply(0.8)),
         );
@@ -476,14 +599,27 @@ fn row(
         let text_left = nr.left() + 26.0;
         let text_w = nr.right() - text_left;
         let name_g = widgets::truncated_galley(ui, &e.name, theme::font_medium(14.0), p.text, text_w);
-        let dir_g = widgets::truncated_galley(ui, &e.dir_text, theme::font_regular(11.5), p.text_faint, text_w);
+        // In compatto (senza colonna hash) l'errore di un file illeggibile va al posto della cartella.
+        let (dir_text, dir_color) = match &e.state {
+            EntryState::Failed(err) if cols.hash.is_none() => (err.as_str(), p.error),
+            _ => (e.dir_text.as_str(), p.text_faint),
+        };
+        let dir_g = widgets::truncated_galley(ui, dir_text, theme::font_regular(11.5), dir_color, text_w);
         // Sul web i file aperti singolarmente non hanno cartella: il nome resta centrato.
-        let dir_h = if e.dir_text.is_empty() { 0.0 } else { dir_g.size().y };
+        let dir_h = if dir_text.is_empty() { 0.0 } else { dir_g.size().y };
         let block_h = name_g.size().y + dir_h;
         let y0 = nr.center().y - block_h / 2.0;
         ui.painter().galley(Pos2::new(text_left, y0), name_g, p.text);
         ui.painter()
-            .galley(Pos2::new(text_left, y0 + block_h - dir_g.size().y), dir_g, p.text_faint);
+            .galley(Pos2::new(text_left, y0 + block_h - dir_g.size().y), dir_g, dir_color);
+        // In compatto l'avanzamento è una barra sottile sotto il nome.
+        if cols.hash.is_none() && matches!(e.state, EntryState::Computing { .. }) {
+            let bar = Rect::from_min_max(
+                Pos2::new(text_left, r.bottom() - 6.0),
+                Pos2::new(col_rect(r, cols.size).right(), r.bottom() - 3.0),
+            );
+            widgets::paint_progress(ui, bar, Some(e.fraction()), false, p);
+        }
 
         // Dimensione.
         let szr = col_rect(r, cols.size);
@@ -513,10 +649,10 @@ fn row(
         }
     }
 
-    // Colonna hash / avanzamento.
-    let hr = col_rect(r, cols.hash);
+    // Colonna hash / avanzamento (assente in compatto).
     let mut copy: Option<(String, Algo)> = None;
-    {
+    if let Some(hcol) = cols.hash {
+        let hr = col_rect(r, hcol);
         let e = &app.entries[i];
         match &e.state {
             EntryState::Queued => {
@@ -635,6 +771,20 @@ fn row(
         if e.is_done() && ui.button(t!("single.copy_all")).clicked() {
             app.actions.push(Action::CopyAll(id));
         }
+        // Su touch non c'è Ctrl+clic: la selezione per il confronto passa dal menu (pressione lunga).
+        if super::layout::is_touch() {
+            let label = if e.selected {
+                t!("list.ctx_deselect")
+            } else {
+                t!("list.ctx_select")
+            };
+            if ui.button(label).clicked() {
+                app.actions.push(Action::RowClick {
+                    id,
+                    mods: egui::Modifiers::COMMAND,
+                });
+            }
+        }
         ui.separator();
         if ui.button(t!("list.remove")).clicked() {
             app.actions.push(Action::Remove(id));
@@ -644,8 +794,8 @@ fn row(
     // Dettaglio espanso.
     if expanded {
         let detail_max = Rect::from_min_max(
-            Pos2::new(rect.left() + PAD, r.bottom() + 4.0),
-            Pos2::new(rect.right() - PAD, r.bottom() + 4.0 + 10_000.0),
+            Pos2::new(rect.left() + cols.pad, r.bottom() + 4.0),
+            Pos2::new(rect.right() - cols.pad, r.bottom() + 4.0 + 10_000.0),
         );
         let inner = ui.scope_builder(
             UiBuilder::new().max_rect(detail_max).id_salt(("hasher.detail", id)),
@@ -658,7 +808,7 @@ fn row(
                     })
                     .stroke(Stroke::new(1.0, p.border))
                     .corner_radius(10)
-                    .inner_margin(Margin::same(14))
+                    .inner_margin(Margin::same(if cols.hash.is_none() { 8 } else { 14 }))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         let items = single::info_items(&app.entries[i]);

@@ -14,6 +14,7 @@ mod dropzone;
 mod export;
 mod format;
 mod help;
+pub(crate) mod layout;
 mod list;
 mod settings;
 mod single;
@@ -436,7 +437,7 @@ pub struct HasherApp {
     id_base: FileId,
     verdicts_dirty: bool,
     hex_uppercase: bool,
-    applied_theme: Option<(ThemeMode, bool)>,
+    applied_theme: Option<(ThemeMode, bool, bool)>,
     /// Notifiche generate fuori dal frame (senza `Context`), mostrate come toast.
     notices: Vec<(ToastKind, String)>,
 }
@@ -535,9 +536,13 @@ impl HasherApp {
     }
 
     fn apply_theme(&mut self, ctx: &Context) {
-        let wanted = (self.effective_theme(), self.effective_animations());
+        let wanted = (
+            self.effective_theme(),
+            self.effective_animations(),
+            layout::compact(ctx),
+        );
         if self.applied_theme != Some(wanted) {
-            theme::apply(ctx, wanted.0, wanted.1);
+            theme::apply(ctx, wanted.0, wanted.1, wanted.2);
             self.applied_theme = Some(wanted);
         }
     }
@@ -1560,6 +1565,9 @@ fn resolve_checksum_entry(base_dir: &Path, file_name: &str, pool: &[WebInput]) -
 
 impl eframe::App for HasherApp {
     fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        if web::fix_canvas_resolution() {
+            ctx.request_repaint();
+        }
         self.poll_engine(ctx);
     }
 
@@ -1578,14 +1586,25 @@ impl eframe::App for HasherApp {
             widgets::toast(&ctx, kind, text);
         }
 
+        // Sotto i 700 px (smartphone) le viste usano le varianti compatte; il pannello Verifica
+        // non è laterale ma prende il posto della scheda o dell'elenco.
+        let compact = layout::compact(&ctx);
         topbar::show(self, ui);
         statusbar::show(self, ui);
-        verify::panel(self, ui);
+        if !compact {
+            verify::panel(self, ui);
+        }
         let p = theme::pal(ui);
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(p.bg).inner_margin(egui::Margin::same(16)))
+            .frame(
+                egui::Frame::new()
+                    .fill(p.bg)
+                    .inner_margin(egui::Margin::same(if compact { 12 } else { 16 })),
+            )
             .show(ui, |ui| {
-                if self.entries.is_empty() && !self.is_running() && !self.is_exploring() {
+                if compact && self.verify_open {
+                    verify::full(self, ui);
+                } else if self.entries.is_empty() && !self.is_running() && !self.is_exploring() {
                     dropzone::empty_state(self, ui);
                 } else if self.entries.len() == 1 && !self.multi {
                     single::show(self, ui);

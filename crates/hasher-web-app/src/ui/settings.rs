@@ -1,5 +1,6 @@
 //! Finestra impostazioni: lingua, tema, algoritmi predefiniti, opzioni di calcolo, animazioni.
 
+use super::layout;
 use super::theme::{self, pal};
 use super::topbar::{algos_in, group_label, GROUP_COLUMNS};
 use super::widgets::{self, Btn};
@@ -37,7 +38,12 @@ pub(crate) fn window(app: &mut HasherApp, ctx: &Context) {
     let mut save = false;
     let mut cancel = false;
     let screen = ctx.content_rect();
-    let height = (screen.height() - 120.0).clamp(300.0, 640.0);
+    // Sul desktop identica a prima; su schermi bassi o stretti si adatta (layout::window_width).
+    let height = (screen.height() - 120.0).clamp(140.0, 640.0);
+    let width = layout::window_width(ctx, 580.0 + 36.0) - 36.0;
+    let compact = layout::compact(ctx);
+    // Footer compatto anche su schermi bassi: più spazio per le impostazioni che scorrono.
+    let compact_footer = compact || layout::short(ctx);
     // Sul web le impostazioni vivono in `localStorage` (stesso JSON del file del desktop).
     let path = format!("localStorage · {}", crate::settings::STORAGE_KEY);
 
@@ -46,7 +52,8 @@ pub(crate) fn window(app: &mut HasherApp, ctx: &Context) {
         .collapsible(false)
         .resizable(false)
         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .fixed_size(Vec2::new(580.0, height))
+        .constrain(true)
+        .fixed_size(Vec2::new(width, height))
         .open(&mut open)
         .show(ctx, |ui| {
             let p = pal(ui);
@@ -60,12 +67,26 @@ pub(crate) fn window(app: &mut HasherApp, ctx: &Context) {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width() - 10.0);
-                    body(ui, draft);
+                    body(ui, draft, compact);
                 });
 
             ui.add_space(6.0);
             ui.separator();
             ui.add_space(4.0);
+            if compact_footer {
+                // In compatto: badge su una riga, pulsanti sulla successiva.
+                widgets::icon_badge(ui, icons::BROWSER, t!("settings.browser_storage"), p.accent)
+                    .on_hover_text(t!("settings.browser_storage_hint"));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.add(Btn::primary(t!("settings.save")).icon(icons::CHECK)).clicked() {
+                        save = true;
+                    }
+                    if ui.add(Btn::ghost(t!("app.cancel"))).clicked() {
+                        cancel = true;
+                    }
+                });
+                return;
+            }
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(icons::FLOPPY_DISK)
@@ -103,32 +124,42 @@ pub(crate) fn window(app: &mut HasherApp, ctx: &Context) {
     }
 }
 
-fn body(ui: &mut Ui, draft: &mut Settings) {
+fn body(ui: &mut Ui, draft: &mut Settings, compact: bool) {
     let p = pal(ui);
 
     section(ui, icons::TRANSLATE, t!("settings.language"), |ui| {
+        let language_combo = |ui: &mut Ui, draft: &mut Settings, width: f32| {
+            let current = draft.language;
+            let label = |l: Language| {
+                if l == Language::Auto {
+                    t!("settings.language_auto").into_owned()
+                } else {
+                    l.native_name().to_owned()
+                }
+            };
+            egui::ComboBox::from_id_salt("hasher.settings.language")
+                .selected_text(label(current))
+                .width(width)
+                .icon(widgets::combo_caret)
+                .show_ui(ui, |ui| {
+                    for l in Language::ALL {
+                        if ui.selectable_value(&mut draft.language, l, label(l)).changed() {
+                            apply_language(l);
+                        }
+                    }
+                });
+        };
+        if compact {
+            // Etichetta sopra, selettore a tutta larghezza sotto.
+            ui.label(RichText::new(t!("settings.language_label")).color(p.text));
+            let w = ui.available_width();
+            language_combo(ui, draft, w);
+            return;
+        }
         ui.horizontal(|ui| {
             ui.label(RichText::new(t!("settings.language_label")).color(p.text));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let current = draft.language;
-                let label = |l: Language| {
-                    if l == Language::Auto {
-                        t!("settings.language_auto").into_owned()
-                    } else {
-                        l.native_name().to_owned()
-                    }
-                };
-                egui::ComboBox::from_id_salt("hasher.settings.language")
-                    .selected_text(label(current))
-                    .width(200.0)
-                    .icon(widgets::combo_caret)
-                    .show_ui(ui, |ui| {
-                        for l in Language::ALL {
-                            if ui.selectable_value(&mut draft.language, l, label(l)).changed() {
-                                apply_language(l);
-                            }
-                        }
-                    });
+                language_combo(ui, draft, 200.0);
             });
         });
     });
@@ -136,7 +167,8 @@ fn body(ui: &mut Ui, draft: &mut Settings) {
     section(ui, icons::PALETTE, t!("settings.theme"), |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            let w = ((ui.available_width() - 16.0) / 3.0).max(100.0);
+            let w = (ui.available_width() - 16.0) / 3.0;
+            let w = if compact { w } else { w.max(100.0) };
             for (mode, icon, label) in [
                 (ThemeMode::System, icons::MONITOR, t!("settings.theme_system")),
                 (ThemeMode::Light, icons::SUN, t!("settings.theme_light")),
@@ -182,9 +214,10 @@ fn body(ui: &mut Ui, draft: &mut Settings) {
     section(ui, icons::HASH, t!("settings.default_algos"), |ui| {
         widgets::caption(ui, t!("settings.default_algos_hint"));
         ui.add_space(6.0);
-        ui.columns(2, |cols| {
+        ui.columns(if compact { 1 } else { 2 }, |cols| {
             for (ci, groups) in GROUP_COLUMNS.iter().enumerate() {
-                let ui = &mut cols[ci];
+                // In compatto tutti i gruppi in un'unica colonna.
+                let ui = &mut cols[if compact { 0 } else { ci }];
                 for g in groups.iter() {
                     ui.add_space(2.0);
                     ui.label(
@@ -251,6 +284,28 @@ fn body(ui: &mut Ui, draft: &mut Settings) {
     });
 
     section(ui, icons::CPU, t!("settings.performance"), |ui| {
+        if compact {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.label(
+                RichText::new(t!("settings.parallel"))
+                    .font(theme::font_medium(14.0))
+                    .color(p.text),
+            );
+            widgets::caption(ui, t!("settings.parallel_hint"));
+            ui.horizontal(|ui| {
+                let mut v = draft.parallel_files.min(8) as u32;
+                if ui.add(Slider::new(&mut v, 0..=8).show_value(false)).changed() {
+                    draft.parallel_files = v as usize;
+                }
+                let label = if draft.parallel_files == 0 {
+                    t!("settings.parallel_auto").into_owned()
+                } else {
+                    draft.parallel_files.to_string()
+                };
+                ui.label(RichText::new(label).font(theme::font_semibold(13.5)).color(p.primary));
+            });
+            return;
+        }
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;

@@ -223,6 +223,10 @@ diversi dello stesso dominio non si disturbano.
   browser: Chrome *Installa Hasher…* oppure *Salva e condividi → Installa pagina come app*; Edge *App → Installa questo sito
   come app*); nell'app c'è anche **Aiuto → Installa come app**. Firefox su desktop non installa le PWA; Safari su macOS
   offre *Aggiungi al Dock*.
+- **Smartphone e tablet**: su Android, Chrome propone *Installa app* (o *Aggiungi a schermata Home* dal menu ⋮);
+  su iPhone e iPad, in Safari, *Condividi → Aggiungi alla schermata Home*. Sotto i 700 px di larghezza l'interfaccia
+  passa al layout compatto (menu ☰, pulsanti a tutta larghezza, verifica a schermo intero); su iOS il selettore di
+  cartelle non esiste e *Apri cartella* permette di scegliere singoli file.
 - **Barra delle applicazioni e dock**: su Windows, con l'app installata e aperta, clic destro sull'icona nella barra →
   *Aggancia alla barra delle applicazioni*; su macOS l'app compare in
   *Applicazioni* e si trascina nel Dock.

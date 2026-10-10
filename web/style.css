@@ -6,9 +6,14 @@
 /* Tema scelto nelle impostazioni dell'app (impostato da boot.js prima dell'avvio). */
 :root[data-theme="dark"] { color-scheme: dark; --bg: #0E1526; --fg: #E6ECF4; --muted: #9AAAC2; --primary: #4F86C6; }
 :root[data-theme="light"] { color-scheme: light; }
-html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-#hasher_canvas { position: absolute; inset: 0; width: 100%; height: 100%; outline: none; touch-action: none; }
+html, body { margin: 0; padding: 0; height: 100%; height: 100dvh; overflow: hidden; overscroll-behavior: none;
+  background: var(--bg); color: var(--fg); font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+/* Il canvas rispetta le safe area (tacca, barra di sistema) quando l'app è installata a tutto schermo;
+   niente gesti del browser (pull-to-refresh, zoom) sopra l'interfaccia. */
+#hasher_canvas { position: absolute; outline: none; touch-action: none;
+  top: env(safe-area-inset-top, 0px); left: env(safe-area-inset-left, 0px);
+  width: calc(100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  height: calc(100% - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
 #splash { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 18px; background: var(--bg); z-index: 10; }
 #splash .brand { margin: 0; font-weight: 700; font-size: 20px; }

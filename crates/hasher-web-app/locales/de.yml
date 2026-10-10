@@ -43,6 +43,7 @@ menu:
   shortcuts: "Tastenkürzel"
   about: "Info"
   install: "Als App installieren"
+  menu: "Menü"
 drop:
   title: "Dateien und Ordner hier ablegen"
   subtitle: "Hashes werden sofort berechnet, wobei jede Datei nur einmal gelesen wird."
@@ -58,6 +59,7 @@ drop:
   release_compare_two: "Die beiden Dateien vergleichen"
   install: "Hasher als App installieren"
   install_tooltip: "Über die Taskleiste oder das Dock starten – auch offline"
+  title_touch: "Tippen Sie auf „Dateien öffnen“"
 single:
   cancelled_hash: "abgebrochen"
   size: "Größe"
@@ -94,6 +96,8 @@ list:
   state_failed: "Fehler"
   files_count_one: "%{n} Datei"
   selected_count_one: "%{n} ausgewählt"
+  ctx_select: "Für den Vergleich auswählen"
+  ctx_deselect: "Auswahl aufheben"
 verify:
   title: "Überprüfen"
   subtitle: "Mit einem erwarteten Hash vergleichen"
@@ -138,6 +142,10 @@ verify:
   checksum_all_ok_hint_one: "%{n} Datei erfolgreich überprüft."
   count_failed_one: "%{n} fehlgeschlagen"
   count_missing_one: "%{n} fehlend"
+  tip_paste_touch: "Kopieren Sie den veröffentlichten Hash und tippen Sie auf „Einfügen“: Der Algorithmus wird anhand der Länge erkannt."
+  tip_checksum_touch: "Öffnen Sie eine Datei vom Typ .md5, .sha256, .sfv … zusammen mit den zu prüfenden Dateien."
+  tip_compare_touch: "Halten Sie zwei Zeilen der Liste gedrückt und wählen Sie „Für den Vergleich auswählen“."
+  drop_to_check_touch: "Öffnen Sie eine Datei, um sie mit diesem Hash zu überprüfen."
 compare:
   title: "Vergleich"
   identical: "Identisch"
@@ -279,6 +287,7 @@ toast:
   compare_hint: "Wählen Sie zwei Dateien mit Ctrl+Klick aus, um sie zu vergleichen"
   paste_unavailable: "Der Browser erlaubt keinen Zugriff auf die Zwischenablage: Drücken Sie Ctrl+V"
   worker_unavailable: "Rechenmodul nicht verfügbar: Laden Sie die Seite neu"
+  compare_hint_touch: "Halten Sie zwei Zeilen gedrückt und wählen Sie „Für den Vergleich auswählen“"
 shortcuts:
   open_files: "Dateien öffnen"
   open_folder: "Ordner öffnen"

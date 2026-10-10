@@ -43,6 +43,7 @@ menu:
   shortcuts: "Atajos de teclado"
   about: "Acerca de"
   install: "Instalar como aplicación"
+  menu: "Menú"
 drop:
   title: "Suelta aquí archivos y carpetas"
   subtitle: "Los hashes se calculan al instante, leyendo cada archivo una sola vez."
@@ -58,6 +59,7 @@ drop:
   release_compare_two: "Comparar los dos archivos"
   install: "Instalar Hasher como aplicación"
   install_tooltip: "Ábrela desde la barra de tareas o el Dock, incluso sin conexión"
+  title_touch: "Toca «Abrir archivos»"
 single:
   cancelled_hash: "cancelado"
   size: "Tamaño"
@@ -94,6 +96,8 @@ list:
   state_failed: "Error"
   files_count_one: "%{n} archivo"
   selected_count_one: "%{n} seleccionado"
+  ctx_select: "Seleccionar para comparar"
+  ctx_deselect: "Deseleccionar"
 verify:
   title: "Verificar"
   subtitle: "Comparar con un hash esperado"
@@ -138,6 +142,10 @@ verify:
   checksum_all_ok_hint_one: "%{n} archivo verificado correctamente."
   count_failed_one: "%{n} fallido"
   count_missing_one: "%{n} faltante"
+  tip_paste_touch: "Copia el hash publicado y toca Pegar: el algoritmo se reconoce por la longitud."
+  tip_checksum_touch: "Abre un archivo .md5, .sha256, .sfv… junto con los archivos que quieres verificar."
+  tip_compare_touch: "Mantén pulsadas dos filas de la lista y elige «Seleccionar para comparar»."
+  drop_to_check_touch: "Abre un archivo para verificarlo con este hash."
 compare:
   title: "Comparación"
   identical: "Idénticos"
@@ -279,6 +287,7 @@ toast:
   compare_hint: "Selecciona dos archivos con Ctrl+clic para compararlos"
   paste_unavailable: "El navegador no permite leer el portapapeles: pulsa Ctrl+V"
   worker_unavailable: "Motor de cálculo no disponible: recarga la página"
+  compare_hint_touch: "Mantén pulsadas dos filas y elige «Seleccionar para comparar»"
 shortcuts:
   open_files: "Abrir archivos"
   open_folder: "Abrir carpeta"

@@ -43,6 +43,7 @@ menu:
   shortcuts: "Keyboard shortcuts"
   about: "About"
   install: "Install as app"
+  menu: "Menu"
 drop:
   title: "Drop files and folders here"
   subtitle: "Hashes are computed right away, reading each file only once."
@@ -58,6 +59,7 @@ drop:
   release_compare_two: "Compare the two files"
   install: "Install Hasher as an app"
   install_tooltip: "Open it from the taskbar or dock, even offline"
+  title_touch: "Tap “Open files”"
 single:
   cancelled_hash: "cancelled"
   size: "Size"
@@ -94,6 +96,8 @@ list:
   state_failed: "Error"
   files_count_one: "%{n} file"
   selected_count_one: "%{n} selected"
+  ctx_select: "Select for comparison"
+  ctx_deselect: "Deselect"
 verify:
   title: "Verify"
   subtitle: "Compare with an expected hash"
@@ -138,6 +142,10 @@ verify:
   checksum_all_ok_hint_one: "%{n} file verified successfully."
   count_failed_one: "%{n} failed"
   count_missing_one: "%{n} missing"
+  tip_paste_touch: "Copy the published hash and tap Paste: the algorithm is recognised from its length."
+  tip_checksum_touch: "Open a .md5, .sha256, .sfv… file together with the files to verify."
+  tip_compare_touch: "Long-press two rows of the list and choose “Select for comparison”."
+  drop_to_check_touch: "Open a file to verify it against this hash."
 compare:
   title: "Comparison"
   identical: "Identical"
@@ -279,6 +287,7 @@ toast:
   compare_hint: "Select two files with Ctrl+click to compare them"
   paste_unavailable: "The browser does not allow reading the clipboard: press Ctrl+V"
   worker_unavailable: "Hashing engine unavailable: reload the page"
+  compare_hint_touch: "Long-press two rows and choose “Select for comparison”"
 shortcuts:
   open_files: "Open files"
   open_folder: "Open folder"
