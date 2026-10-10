@@ -5,7 +5,7 @@ members = ["crates/hasher-core", "crates/hasher-web-app", "crates/hasher-web-ser
 default-members = ["crates/hasher-core", "crates/hasher-web-server"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.95"
 authors = ["Martini Multimedia s.a.s."]
