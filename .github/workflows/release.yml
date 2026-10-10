@@ -220,6 +220,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.tag }}
-          files: dist/*
+          # Only the real assets: dist/ also holds the repository's empty .gitkeep, which
+          # GitHub rejects ("size must be greater than or equal to 1") and that fails the job.
+          files: |
+            dist/hasher-web-*.tar.gz
+            dist/SHA256SUMS.txt
           generate_release_notes: true
           prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
