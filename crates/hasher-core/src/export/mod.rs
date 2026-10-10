@@ -296,7 +296,7 @@ pub(crate) mod tests {
                 ExportFormat::Txt => assert!(String::from_utf8_lossy(&bytes).contains("ba7816bf8f01cfea")),
                 ExportFormat::Checksum(_) => {
                     assert!(String::from_utf8_lossy(&bytes)
-                        .contains("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  a.txt"))
+                        .contains("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  docs/a.txt"))
                 }
             }
         }

@@ -2,6 +2,9 @@
 //! - GNU coreutils (`hex  nome`, due spazi) con intestazione di commento `# …`;
 //! - SFV (`nome HEX`, CRC32 maiuscolo) con commenti `; …` quando l'algoritmo è CRC32.
 //!
+//! Il nome scritto è `info.path`: sul web è il percorso relativo alla cartella trascinata
+//! (`cartella/sub/file`), così il file resta verificabile con `sha256sum -c` dalla cartella che
+//! contiene quella trascinata e, in Hasher stesso, rilasciando insieme cartella e file di checksum.
 //! I file privi dell'algoritmo richiesto vengono saltati e contati in un commento finale.
 //! Nel formato GNU, un nome contenente `\`, ritorno a capo o `\r` segue la convenzione di
 //! coreutils: riga prefissata da `\` e sequenze di escape `\\`, `\n`, `\r`.
@@ -38,11 +41,12 @@ pub fn write(out: &mut impl Write, algo: Algo, results: &[FileResult], opts: &Ex
             skipped += 1;
             continue;
         };
+        let path = r.info.path.to_string_lossy();
         if sfv {
             // Convenzione SFV: CRC32 sempre maiuscolo, `nome CRC`.
-            writeln!(out, "{} {}", r.info.name, to_hex(digest, true))?;
+            writeln!(out, "{} {}", path, to_hex(digest, true))?;
         } else {
-            let (escaped, name) = gnu_name(&r.info.name);
+            let (escaped, name) = gnu_name(&path);
             let prefix = if escaped { "\\" } else { "" };
             writeln!(out, "{prefix}{}  {name}", to_hex(digest, opts.uppercase_hex))?;
         }

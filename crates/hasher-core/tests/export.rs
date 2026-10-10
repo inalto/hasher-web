@@ -22,6 +22,9 @@ const SHA256_EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495
 const NA: &str = "N/A";
 const NAME_1: &str = "abc.txt";
 const NAME_2: &str = "senza date \u{e9}\u{fc}.bin";
+/// Percorsi (sul web: relativi alla cartella trascinata); i file di checksum scrivono `info.path`.
+const PATH_1: &str = "/data/docs/abc.txt";
+const PATH_2: &str = "/data/docs/sub/senza date \u{e9}\u{fc}.bin";
 
 fn local(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Local> {
     Local.with_ymd_and_hms(y, mo, d, h, mi, s).unwrap()
@@ -36,7 +39,7 @@ fn sample_results() -> Vec<FileResult> {
     let full = FileResult {
         id: 1,
         info: FileInfo {
-            path: PathBuf::from("/data/docs/abc.txt"),
+            path: PathBuf::from(PATH_1),
             name: NAME_1.to_string(),
             extension: Some("txt".to_string()),
             size: 1_234_567,
@@ -57,7 +60,7 @@ fn sample_results() -> Vec<FileResult> {
     let sparse = FileResult {
         id: 2,
         info: FileInfo {
-            path: PathBuf::from("/data/docs/sub/senza date \u{e9}\u{fc}.bin"),
+            path: PathBuf::from(PATH_2),
             name: NAME_2.to_string(),
             extension: Some("bin".to_string()),
             size: 0,
@@ -351,7 +354,7 @@ fn checksum_gnu_format() {
         .into_iter()
         .map(|l| l.split_once("  ").expect("two spaces"))
         .collect();
-    assert_eq!(entries, vec![(SHA256_ABC, NAME_1), (SHA256_EMPTY, NAME_2)]);
+    assert_eq!(entries, vec![(SHA256_ABC, PATH_1), (SHA256_EMPTY, PATH_2)]);
     assert!(!text.contains(NA), "no skipped files expected for SHA-256");
 }
 
@@ -363,7 +366,7 @@ fn checksum_skips_files_without_the_algorithm() {
     let mut results = sample_results();
     results[1].digests.remove(&Algo::Md5);
     let text = run_text(ExportFormat::Checksum(Algo::Md5), &results, &options(false));
-    assert_eq!(data_lines(&text, '#'), vec![format!("{MD5_ABC}  {NAME_1}")]);
+    assert_eq!(data_lines(&text, '#'), vec![format!("{MD5_ABC}  {PATH_1}")]);
     assert!(text.lines().last().unwrap().starts_with('#'));
     assert!(text.contains("# MD5 N/A: 1"), "{text}");
 }
@@ -385,7 +388,7 @@ fn checksum_sfv_format_for_crc32() {
     // Il secondo file non ha CRC32: saltato e contato in un commento.
     assert_eq!(
         data_lines(&text, ';'),
-        vec![format!("{NAME_1} {}", CRC32_ABC.to_uppercase())]
+        vec![format!("{PATH_1} {}", CRC32_ABC.to_uppercase())]
     );
     assert!(text.lines().last().unwrap().starts_with(';'));
     assert!(text.contains("; CRC32 N/A: 1"), "{text}");
@@ -395,6 +398,7 @@ fn checksum_sfv_format_for_crc32() {
 fn checksum_files_roundtrip_through_the_parser() {
     let mut results = sample_results();
     results[1].info.name = "we\\ird\nname.bin".to_string(); // backslash e ritorno a capo
+    results[1].info.path = std::path::PathBuf::from("we\\ird\nname.bin"); // nel checksum va `info.path`
     let opts = options(false);
 
     let text = run_text(ExportFormat::Checksum(Algo::Sha256), &results, &opts);
@@ -402,7 +406,7 @@ fn checksum_files_roundtrip_through_the_parser() {
     assert_eq!(entries.len(), 2, "{text}");
     assert_eq!(
         (entries[0].hex.as_str(), entries[0].file_name.as_str()),
-        (SHA256_ABC, NAME_1)
+        (SHA256_ABC, PATH_1)
     );
     assert_eq!(
         (entries[1].hex.as_str(), entries[1].file_name.as_str()),
@@ -418,7 +422,7 @@ fn checksum_files_roundtrip_through_the_parser() {
     assert_eq!(entries.len(), 1, "{text}");
     assert_eq!(
         (entries[0].hex.as_str(), entries[0].file_name.as_str()),
-        (CRC32_ABC, NAME_1)
+        (CRC32_ABC, PATH_1)
     );
 }
 
@@ -447,7 +451,7 @@ fn uppercase_hex_affects_every_format() {
 
     // Checksum GNU
     let sum_u = run_text(ExportFormat::Checksum(Algo::Sha256), &results, &upper);
-    assert!(sum_u.contains(&format!("{}  {NAME_1}", SHA256_ABC.to_uppercase())));
+    assert!(sum_u.contains(&format!("{}  {PATH_1}", SHA256_ABC.to_uppercase())));
 
     // SFV: maiuscolo in ogni caso.
     let sfv_l = run_text(ExportFormat::Checksum(Algo::Crc32), &results, &lower);

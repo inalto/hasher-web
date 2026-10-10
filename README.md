@@ -37,16 +37,20 @@ funziona anche offline dopo la prima visita.
 
 ## Screenshot
 
-<!-- Da aggiungere in docs/screenshots/ (stessi nomi del desktop: single-dark.png, list-light.png, verify.png, empty-light.png). -->
-
 <p align="center">
-  <img src="docs/screenshots/single-dark.png" alt="Vista file singolo (tema scuro)" width="49%">
-  <img src="docs/screenshots/list-light.png" alt="Vista elenco (tema chiaro)" width="49%">
+  <img src="docs/screenshots/single-light.png" alt="Vista file singolo" width="49%">
+  <img src="docs/screenshots/list-light.png" alt="Vista elenco di una cartella trascinata" width="49%">
 </p>
 <p align="center">
   <img src="docs/screenshots/verify.png" alt="Verifica di un hash incollato" width="49%">
+  <img src="docs/screenshots/checksum.png" alt="Verifica con un file SHA256SUMS" width="49%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/list-expanded-dark.png" alt="Riga espansa (tema scuro)" width="49%">
   <img src="docs/screenshots/empty-light.png" alt="Zona di trascinamento" width="49%">
 </p>
+
+Le schermate sono catturate dalla versione web in Chromium: l'interfaccia è la stessa dell'app desktop.
 
 ## Privacy
 
@@ -149,6 +153,7 @@ I limiti dipendono dal browser, che non dà alle pagine web accesso al file syst
 | "Apri cartella" nella scheda del file | Non presente |
 | Dialoghi nativi di apertura e salvataggio | Selettori di file del browser; l'esportazione è un download |
 | File di checksum: i file elencati si cercano su disco | Si cercano fra i file già in elenco o rilasciati insieme (stesso drop o stessa cartella); gli altri risultano MANCANTE |
+| Export di un file di checksum con il solo nome del file | Con il percorso relativo alla cartella trascinata (`cartella/sub/file`), verificabile con `sha256sum -c` dalla cartella superiore o rilasciando di nuovo cartella e file di checksum insieme |
 | Impostazioni portable accanto all'eseguibile | Impostazioni nel `localStorage` del browser |
 | "Segui i link simbolici", menu File → Esci, riga di comando | Non presenti |
 | Parallelismo con rayon | Pool di Web Worker (al massimo 8) |
