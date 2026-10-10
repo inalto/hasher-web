@@ -257,8 +257,15 @@ pub(crate) mod tests {
             .enumerate()
             .map(|(i, (path, data))| FileResult {
                 id: i as u64 + 1,
-                info: FileInfo::basic(*path, data.len() as u64, Some(Local.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap())),
-                digests: algos.iter().map(|a| (*a, hash_bytes(*a, data))).collect::<BTreeMap<_, _>>(),
+                info: FileInfo::basic(
+                    *path,
+                    data.len() as u64,
+                    Some(Local.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap()),
+                ),
+                digests: algos
+                    .iter()
+                    .map(|a| (*a, hash_bytes(*a, data)))
+                    .collect::<BTreeMap<_, _>>(),
                 elapsed: Duration::from_millis(3),
             })
             .collect()
@@ -269,19 +276,27 @@ pub(crate) mod tests {
         let algos = [Algo::Md5, Algo::Sha256];
         let results = sample_results(&algos);
         let opts = sample_options(&algos);
-        for f in ExportFormat::BASIC.iter().copied().chain([ExportFormat::Checksum(Algo::Sha256)]) {
+        for f in ExportFormat::BASIC
+            .iter()
+            .copied()
+            .chain([ExportFormat::Checksum(Algo::Sha256)])
+        {
             let bytes = export_to_vec(f, &results, &opts).unwrap_or_else(|e| panic!("{f:?}: {e:#}"));
             assert!(!bytes.is_empty(), "{f:?}");
             match f {
                 ExportFormat::Xlsx | ExportFormat::Docx => assert_eq!(&bytes[..2], b"PK", "{f:?} è uno zip"),
                 ExportFormat::Json => {
                     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-                    assert_eq!(v["files"][0]["hashes"]["sha256"], "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+                    assert_eq!(
+                        v["files"][0]["hashes"]["sha256"],
+                        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+                    );
                 }
                 ExportFormat::Csv => assert!(bytes.starts_with(b"\xEF\xBB\xBF")),
                 ExportFormat::Txt => assert!(String::from_utf8_lossy(&bytes).contains("ba7816bf8f01cfea")),
                 ExportFormat::Checksum(_) => {
-                    assert!(String::from_utf8_lossy(&bytes).contains("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  a.txt"))
+                    assert!(String::from_utf8_lossy(&bytes)
+                        .contains("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  a.txt"))
                 }
             }
         }
@@ -290,8 +305,14 @@ pub(crate) mod tests {
     #[test]
     fn suggested_names_and_mime() {
         let when = Local.with_ymd_and_hms(2026, 10, 10, 9, 5, 7).unwrap();
-        assert_eq!(ExportFormat::Xlsx.suggested_file_name(when), "hasher-20261010-090507.xlsx");
-        assert_eq!(ExportFormat::Checksum(Algo::Sha256).suggested_file_name(when), "hasher-20261010-090507.sha256");
+        assert_eq!(
+            ExportFormat::Xlsx.suggested_file_name(when),
+            "hasher-20261010-090507.xlsx"
+        );
+        assert_eq!(
+            ExportFormat::Checksum(Algo::Sha256).suggested_file_name(when),
+            "hasher-20261010-090507.sha256"
+        );
         assert!(ExportFormat::Docx.mime().contains("wordprocessingml"));
     }
 }

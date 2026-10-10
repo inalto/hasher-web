@@ -140,6 +140,12 @@ impl Algo {
         }
     }
 
+    /// Inverso esatto di [`Algo::id`] (`"sha3-256"` → `Algo::Sha3_256`); `None` se sconosciuto.
+    /// Per una ricerca tollerante (maiuscole, trattini, nomi BSD) vedi [`Algo::from_label`].
+    pub fn from_id(id: &str) -> Option<Algo> {
+        Algo::ALL.iter().copied().find(|a| a.id() == id)
+    }
+
     /// `true` per gli algoritmi molto lenti (da segnalare nell'interfaccia).
     pub fn is_slow(self) -> bool {
         matches!(self, Algo::Md2)
@@ -301,6 +307,15 @@ mod tests {
         assert_eq!(Algo::from_label("SHA256"), Some(Algo::Sha256));
         assert_eq!(Algo::from_label("sha-256"), Some(Algo::Sha256));
         assert_eq!(Algo::from_label("RIPEMD160"), Some(Algo::Ripemd160));
+    }
+
+    #[test]
+    fn ids_roundtrip() {
+        for a in Algo::ALL {
+            assert_eq!(Algo::from_id(a.id()), Some(a));
+        }
+        assert_eq!(Algo::from_id("SHA256"), None);
+        assert_eq!(Algo::from_id(""), None);
     }
 
     #[test]
