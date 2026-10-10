@@ -1,0 +1,51 @@
+# Hasher Web dietro a Caddy.
+#
+# HTTPS è obbligatorio per la PWA (installazione, service worker; fa eccezione solo localhost):
+# Caddy ottiene e rinnova da solo i certificati Let's Encrypt per il dominio indicato, purché il DNS
+# punti a questo server e le porte 80 e 443 siano raggiungibili.
+#
+# I valori vengono dall'ambiente, con un predefinito:
+#   HASHER_DOMAIN    dominio pubblico            (predefinito: hasher.example.com)
+#   HASHER_UPSTREAM  indirizzo di hasher-web     (predefinito: 127.0.0.1:8080; in compose: hasher-web:8080)
+#
+# Uso su un host: copia il file in /etc/caddy/Caddyfile, adatta il dominio e `systemctl reload caddy`.
+# Uso in compose: vedi deploy/compose.caddy.yaml.
+
+{$HASHER_DOMAIN:hasher.example.com} {
+	# I file di Hasher sono già precompressi (.br/.gz) dal server e passano senza modifiche:
+	# NON attivare `encode` (comprimerebbe i file non precompressi, con ben poco guadagno).
+	reverse_proxy {$HASHER_UPSTREAM:127.0.0.1:8080}
+
+	# HSTS: il browser userà sempre HTTPS per questo dominio. Gli altri header di sicurezza
+	# (CSP, nosniff, Referrer-Policy, Permissions-Policy) li invia già il server.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	log {
+		output stdout
+	}
+}
+
+# ---------------------------------------------------------------------------------------------
+# Variante sotto-percorso: https://example.com/hasher/
+# (sostituisce il blocco sopra; scegli UNA delle due modalità)
+#
+# a) Caddy toglie il prefisso e il server resta alla radice (nessun HASHER_WEB_PREFIX):
+#
+#   example.com {
+#   	redir /hasher /hasher/ permanent
+#   	handle_path /hasher/* {
+#   		reverse_proxy 127.0.0.1:8080
+#   	}
+#   	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+#   }
+#
+# b) Caddy passa il percorso invariato e il server lo conosce (HASHER_WEB_PREFIX=/hasher);
+#    il server rimanda da solo /hasher a /hasher/:
+#
+#   example.com {
+#   	@hasher path /hasher /hasher/*
+#   	handle @hasher {
+#   		reverse_proxy 127.0.0.1:8080
+#   	}
+#   	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+#   }

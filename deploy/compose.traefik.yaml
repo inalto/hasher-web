@@ -1,0 +1,75 @@
+# Hasher Web dietro a Traefik v3 con certificati Let's Encrypt automatici.
+#
+#   HASHER_DOMAIN=hasher.example.com ACME_EMAIL=admin@example.com docker compose -f deploy/compose.traefik.yaml up -d
+#
+# Requisiti: i record DNS di HASHER_DOMAIN puntano a questo server e le porte 80/443 sono raggiungibili
+# da Internet (sfida ACME HTTP-01).
+#
+# HTTPS è obbligatorio per la PWA (installazione, service worker): Traefik lo fornisce e reindirizza
+# da http:// a https://.
+#
+# Se hai già un Traefik in esecuzione, tieni solo il servizio `hasher-web` (con le sue label) e adatta
+# nomi di entrypoint e certresolver ai tuoi.
+#
+# Con podman: sostituisci /var/run/docker.sock con il socket di podman (es. /run/user/1000/podman/podman.sock,
+# da attivare con `systemctl --user enable --now podman.socket`).
+services:
+  traefik:
+    image: traefik:v3
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # http → https
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      # Let's Encrypt
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?imposta ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-letsencrypt:/letsencrypt
+
+  hasher-web:
+    image: ghcr.io/inalto/hasher-web:latest
+    restart: unless-stopped
+    environment:
+      HASHER_WEB_BIND: 0.0.0.0:8080
+      RUST_LOG: info
+    healthcheck:
+      test: ["CMD", "/hasher-web-server", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.hasher.rule=Host(`${HASHER_DOMAIN:?imposta HASHER_DOMAIN}`)
+      - traefik.http.routers.hasher.entrypoints=websecure
+      - traefik.http.routers.hasher.tls.certresolver=letsencrypt
+      - traefik.http.services.hasher.loadbalancer.server.port=8080
+      # Nessun middleware di compressione: i file sono già precompressi (brotli/gzip).
+      #
+      # Variante sotto-percorso (https://example.com/hasher/): scegli UNA delle due.
+      #  a) Traefik toglie il prefisso, il server resta alla radice (nessun HASHER_WEB_PREFIX):
+      #       - traefik.http.routers.hasher.rule=Host(`example.com`) && PathPrefix(`/hasher`)
+      #       - traefik.http.middlewares.hasher-strip.stripprefix.prefixes=/hasher
+      #       - traefik.http.routers.hasher.middlewares=hasher-strip
+      #     (con questa variante `/hasher` senza barra finale va rimandato a `/hasher/` da un altro router.)
+      #  b) Traefik passa il percorso invariato e il server lo conosce:
+      #       HASHER_WEB_PREFIX: /hasher
+      #       - traefik.http.routers.hasher.rule=Host(`example.com`) && PathPrefix(`/hasher`)
+
+volumes:
+  traefik-letsencrypt:

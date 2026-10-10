@@ -1,0 +1,225 @@
+name: Release
+
+# Triggered by pushing a `vX.Y.Z` tag (publishes the image to GHCR and creates the GitHub Release) or
+# manually (workflow_dispatch: builds everything and leaves the artifacts on the run page; with `publish`
+# it also pushes the image and publishes the release for the current Cargo.toml version).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Also push the image to GHCR and publish a GitHub Release for the current Cargo.toml version (creates/updates tag v<version>)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  IMAGE: ghcr.io/inalto/hasher-web
+
+jobs:
+  # Version and image tags. On a tag push the tag MUST match `version` in Cargo.toml: the binary
+  # (`--version`), the image tags and the release assets would otherwise disagree.
+  version:
+    name: version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      image_tags: ${{ steps.version.outputs.image_tags }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          CARGO_VERSION="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            if [[ "${VERSION}" != "${CARGO_VERSION}" ]]; then
+              echo "::error::Tag (${VERSION}) does not match the version in Cargo.toml (${CARGO_VERSION})"
+              exit 1
+            fi
+          else
+            VERSION="${CARGO_VERSION}"
+          fi
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid version: '${VERSION}'"
+            exit 1
+          fi
+          PRERELEASE=false
+          [[ "${VERSION}" == *-* ]] && PRERELEASE=true
+          MAJOR_MINOR="${VERSION%.*}"
+          echo "Version: ${VERSION} (prerelease: ${PRERELEASE})"
+          {
+            echo "version=${VERSION}"
+            echo "tag=v${VERSION}"
+            echo "prerelease=${PRERELEASE}"
+            # vX.Y.Z and X.Y.Z always; X.Y and latest only for final releases.
+            echo "image_tags<<EOF"
+            echo "${IMAGE}:v${VERSION}"
+            echo "${IMAGE}:${VERSION}"
+            if [[ "${PRERELEASE}" == "false" ]]; then
+              echo "${IMAGE}:${MAJOR_MINOR}"
+              echo "${IMAGE}:latest"
+            fi
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+  # The web app (wasm) is platform independent: built once, embedded by the Linux server build below.
+  web:
+    name: web assets (dist)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-web-build
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-web
+
+      - name: Build dist/ (scripts/build-web.sh)
+        run: scripts/build-web.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: dist
+          if-no-files-found: error
+
+  # The server binary is built inside a Rocky Linux 8 container (glibc 2.28) so that it runs on
+  # EL8+/Ubuntu 20.04+/Debian 10+ and newer (same approach as the desktop app).
+  linux:
+    name: server (linux-x86_64)
+    needs: [version, web]
+    runs-on: ubuntu-latest
+    container: rockylinux:8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System dependencies (Rocky Linux 8 container)
+        run: |
+          dnf -y install gcc gcc-c++ binutils curl git tar gzip file
+          echo "glibc: $(rpm -q glibc)"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-server
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: dist
+
+      - name: Build (release, dist/ embedded)
+        run: cargo build --release --locked -p hasher-web-server
+
+      - name: Check the binary
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          BIN=target/release/hasher-web-server
+          file "${BIN}"
+          echo "Highest glibc symbol: $(objdump -T "${BIN}" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n1)"
+          test "$("${BIN}" --version)" = "hasher-web-server ${VERSION}"
+          HASHER_WEB_BIND=127.0.0.1:8080 "${BIN}" &
+          SERVER_PID=$!
+          trap 'kill ${SERVER_PID}' EXIT
+          for _ in $(seq 1 20); do "${BIN}" --healthcheck && break; sleep 0.5; done
+          "${BIN}" --healthcheck
+          curl -fsSI http://127.0.0.1:8080/ | grep -i '^content-security-policy: ' > /dev/null
+
+      - name: Package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          NAME="hasher-web-${VERSION}-linux-x86_64"
+          mkdir -p "release/${NAME}/docs" "release/${NAME}/LICENSES-fonts" out
+          cp target/release/hasher-web-server README.md "release/${NAME}/"
+          cp docs/DEPLOY.md "release/${NAME}/docs/"
+          cp -r deploy "release/${NAME}/deploy"
+          cp crates/hasher-web-app/assets/fonts/LICENSE-*.txt "release/${NAME}/LICENSES-fonts/"
+          tar -C release -czf "out/${NAME}.tar.gz" "${NAME}"
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hasher-web-linux-x86_64
+          path: out/hasher-web-*-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  # Container image (self-contained build: see the Dockerfile). It is only pushed when releasing.
+  docker:
+    name: docker image (GHCR)
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      PUBLISH: ${{ github.ref_type == 'tag' || inputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: env.PUBLISH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: ${{ needs.version.outputs.image_tags }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: |
+            CARGO_BUILD_JOBS=4
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Publish the GitHub Release when the workflow runs from a tag, or on manual runs with `publish`.
+  release:
+    name: GitHub Release
+    needs: [version, linux, docker]
+    if: github.ref_type == 'tag' || inputs.publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: hasher-web-*
+          path: dist
+          merge-multiple: true
+
+      - name: SHA-256 checksums
+        working-directory: dist
+        run: |
+          sha256sum hasher-web-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ needs.version.outputs.prerelease == 'true' }}

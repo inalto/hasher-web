@@ -1,0 +1,15 @@
+# Contesto di build minimo: i sorgenti servono, gli artefatti no (dist/ e target/ si rigenerano nel build).
+target
+**/target
+dist
+.git
+.github
+.gitignore
+.dockerignore
+.DS_Store
+*.log
+node_modules
+docs/screenshots
+Dockerfile
+compose.yaml
+deploy

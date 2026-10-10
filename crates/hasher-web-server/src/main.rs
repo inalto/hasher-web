@@ -1,76 +1,113 @@
-//! Hasher Web — server HTTP. Martini Multimedia s.a.s.
-//!
-//! Serve i file statici della PWA (`dist/`, prodotti da `scripts/build-web.sh`) e nient'altro:
-//! nessuna API, nessun upload. Gli hash vengono calcolati nel browser dell'utente.
-//!
-//! Contratto (docs/PIANO.md §5.4):
-//! - `GET /healthz` → `200 ok`;
-//! - `GET /<file>` → file di `dist/` con `Content-Type` corretto; `/` → `index.html`;
-//! - variabili d'ambiente: `HASHER_WEB_BIND` (default `0.0.0.0:8080`), `HASHER_WEB_PREFIX`
-//!   (default `/`, es. `/hasher` se il proxy non toglie il prefisso), `RUST_LOG`;
-//! - header di cache: `index.html`, `sw.js`, `manifest.webmanifest` → `no-cache`; il resto
-//!   `public, max-age=3600`; `.br`/`.gz` precompressi serviti in base ad `Accept-Encoding`.
-//!
-//! STATO: versione minima funzionante. Completamento (precompressi, header di sicurezza/CSP,
-//! prefisso, spegnimento ordinato, `--healthcheck`) a carico dell'agente "server" (fase 1C).
+//! Hasher Web — eseguibile del server. Vedi la documentazione della libreria (`lib.rs`).
 
-use axum::{
-    body::Body,
-    http::{header, HeaderValue, StatusCode, Uri},
-    response::{IntoResponse, Response},
-    routing::get,
-    Router,
+use std::process::ExitCode;
+use std::sync::Arc;
+
+use hasher_web_server::{
+    healthcheck, router, serve, shutdown_signal, Assets, Config, Dist, EmbedAssets, SHUTDOWN_GRACE,
 };
-use rust_embed::Embed;
 
-#[derive(Embed)]
-#[folder = "../../dist"]
-#[exclude = ".gitkeep"]
-struct Dist;
+const HELP: &str = "\
+Hasher Web — server HTTP della PWA (Martini Multimedia s.a.s.)
 
-async fn healthz() -> &'static str {
-    "ok"
-}
+USO:
+    hasher-web-server               avvia il server
+    hasher-web-server --healthcheck GET /healthz sul server locale; exit 0 se risponde 200, 1 altrimenti
+    hasher-web-server --version     mostra la versione
+    hasher-web-server --help        mostra questo aiuto
 
-async fn static_file(uri: Uri) -> Response {
-    let path = uri.path().trim_start_matches('/');
-    let path = if path.is_empty() { "index.html" } else { path };
-    match Dist::get(path) {
-        Some(file) => {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
-            let cache = if matches!(path, "index.html" | "sw.js" | "manifest.webmanifest") {
-                "no-cache"
-            } else {
-                "public, max-age=3600"
-            };
-            (
-                [
-                    (header::CONTENT_TYPE, HeaderValue::from_str(mime.as_ref()).unwrap()),
-                    (header::CACHE_CONTROL, HeaderValue::from_static(cache)),
-                ],
-                Body::from(file.data.into_owned()),
-            )
-                .into_response()
+VARIABILI D'AMBIENTE:
+    HASHER_WEB_BIND     indirizzo di ascolto (predefinito 0.0.0.0:8080)
+    HASHER_WEB_PREFIX   prefisso di percorso, es. /hasher (predefinito /)
+    RUST_LOG            livello dei log (predefinito info; debug per il log d'accesso)
+";
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        [] => run(),
+        ["--healthcheck"] => check(),
+        ["--version" | "-V"] => {
+            println!("hasher-web-server {}", env!("CARGO_PKG_VERSION"));
+            ExitCode::SUCCESS
         }
-        None => (StatusCode::NOT_FOUND, "not found").into_response(),
+        ["--help" | "-h"] => {
+            print!("{HELP}");
+            ExitCode::SUCCESS
+        }
+        _ => {
+            eprintln!("argomenti non riconosciuti: {}\n\n{HELP}", args.join(" "));
+            ExitCode::from(2)
+        }
     }
 }
 
-#[tokio::main]
-async fn main() {
+/// `--healthcheck`: usato dall'`HEALTHCHECK` dell'immagine.
+fn check() -> ExitCode {
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match healthcheck(&config.bind, &config.prefix) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("healthcheck fallito: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> ExitCode {
     tracing_subscriber::fmt()
+        // Colori solo su un terminale: `docker logs` / journald non devono ricevere sequenze ANSI.
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
-    let bind = std::env::var("HASHER_WEB_BIND").unwrap_or_else(|_| "0.0.0.0:8080".to_owned());
-    let app = Router::new()
-        .route("/healthz", get(healthz))
-        .fallback(get(static_file))
-        .layer(tower_http::trace::TraceLayer::new_for_http());
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(e) => {
+            tracing::error!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            tracing::error!("impossibile avviare il runtime tokio: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match runtime.block_on(run_server(config)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            tracing::error!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
 
-    let listener = tokio::net::TcpListener::bind(&bind)
+async fn run_server(config: Config) -> Result<(), String> {
+    let assets: Arc<dyn Assets> = Arc::new(EmbedAssets::<Dist>::new());
+    if assets.get("index.html").is_none() {
+        tracing::warn!("l'app non è inclusa: manca index.html in dist/ (eseguire scripts/build-web.sh prima di compilare il server)");
+    }
+    let app = router(assets, &config.prefix)?;
+    let listener = tokio::net::TcpListener::bind(&config.bind)
         .await
-        .unwrap_or_else(|e| panic!("cannot bind {bind}: {e}"));
-    tracing::info!("Hasher Web in ascolto su http://{bind}");
-    axum::serve(listener, app).await.expect("server error");
+        .map_err(|e| format!("impossibile ascoltare su {}: {e}", config.bind))?;
+    let local = listener.local_addr().map_err(|e| e.to_string())?;
+    tracing::info!(
+        "Hasher Web {} in ascolto su http://{local}{}/",
+        env!("CARGO_PKG_VERSION"),
+        config.prefix
+    );
+    serve(listener, app, shutdown_signal(), SHUTDOWN_GRACE)
+        .await
+        .map_err(|e| format!("errore del server: {e}"))?;
+    tracing::info!("server arrestato");
+    Ok(())
 }

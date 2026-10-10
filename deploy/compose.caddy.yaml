@@ -1,0 +1,48 @@
+# Hasher Web dietro a Caddy: HTTPS con certificati Let's Encrypt automatici, senza altra configurazione.
+#
+#   HASHER_DOMAIN=hasher.example.com docker compose -f deploy/compose.caddy.yaml up -d
+#
+# Requisiti: il record DNS di HASHER_DOMAIN punta a questo server e le porte 80/443 sono raggiungibili
+# da Internet. Il Caddyfile è deploy/Caddyfile.example (il dominio e l'upstream arrivano dall'ambiente).
+#
+# HTTPS è obbligatorio per la PWA (installazione, service worker): Caddy lo attiva da solo.
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      HASHER_DOMAIN: ${HASHER_DOMAIN:?imposta HASHER_DOMAIN}
+      HASHER_UPSTREAM: hasher-web:8080
+    volumes:
+      - ./Caddyfile.example:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # certificati: da conservare
+      - caddy-config:/config
+    depends_on:
+      - hasher-web
+
+  hasher-web:
+    image: ghcr.io/inalto/hasher-web:latest
+    restart: unless-stopped
+    # Nessuna porta pubblicata: solo Caddy raggiunge il server, nella rete interna di compose.
+    environment:
+      HASHER_WEB_BIND: 0.0.0.0:8080
+      RUST_LOG: info
+    healthcheck:
+      test: ["CMD", "/hasher-web-server", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  caddy-data:
+  caddy-config:

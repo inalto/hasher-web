@@ -1,0 +1,58 @@
+# Hasher Web dietro ad Apache httpd (2.4) con certificati Let's Encrypt.
+#
+# HTTPS è OBBLIGATORIO per la PWA (installazione come app e service worker); fa eccezione solo
+# http://localhost. Senza HTTPS l'app funziona come pagina web ma non è installabile e non lavora offline.
+#
+# Moduli necessari:  a2enmod proxy proxy_http ssl headers rewrite   (Debian/Ubuntu)
+#                    oppure LoadModule nei file di configurazione (RHEL/Alma/Rocky).
+# Uso: copia il file nella configurazione dei siti, sostituisci hasher.example.com e ricarica Apache.
+# Il contenitore ascolta su 127.0.0.1:8080 (vedi compose.yaml).
+
+<VirtualHost *:80>
+    ServerName hasher.example.com
+
+    # Sfida ACME (Let's Encrypt, webroot); tutto il resto passa a https.
+    Alias /.well-known/acme-challenge/ /var/www/letsencrypt/.well-known/acme-challenge/
+    RewriteEngine On
+    RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+</VirtualHost>
+
+<VirtualHost *:443>
+    ServerName hasher.example.com
+
+    SSLEngine on
+    SSLCertificateFile    /etc/letsencrypt/live/hasher.example.com/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/hasher.example.com/privkey.pem
+
+    # HSTS. Gli altri header di sicurezza (CSP, nosniff, Referrer-Policy, Permissions-Policy)
+    # li invia già il server: non vanno ripetuti qui.
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+    # I file sono già precompressi (.br/.gz) dal server, che sceglie la variante in base ad
+    # Accept-Encoding: Apache non deve ricomprimere (mod_deflate) né modificare i corpi.
+    SetEnv no-gzip 1
+
+    ProxyRequests Off
+    ProxyPreserveHost On
+    RequestHeader set X-Forwarded-Proto "https"
+
+    ProxyPass        / http://127.0.0.1:8080/
+    ProxyPassReverse / http://127.0.0.1:8080/
+</VirtualHost>
+
+# --- Variante sotto-percorso: https://example.com/hasher/ -------------------------------------------
+# (nel <VirtualHost *:443> di un sito che serve anche altro, al posto delle due righe ProxyPass sopra).
+# Scegli UNA modalità.
+#
+# a) Apache toglie il prefisso e il server resta alla radice (nessun HASHER_WEB_PREFIX):
+#
+#     RedirectMatch permanent ^/hasher$ /hasher/
+#     ProxyPass        /hasher/ http://127.0.0.1:8080/
+#     ProxyPassReverse /hasher/ http://127.0.0.1:8080/
+#
+# b) Apache passa il percorso invariato e il server lo conosce: avvia il contenitore con
+#    HASHER_WEB_PREFIX=/hasher (il server rimanda da solo /hasher a /hasher/):
+#
+#     ProxyPass        /hasher http://127.0.0.1:8080/hasher
+#     ProxyPassReverse /hasher http://127.0.0.1:8080/hasher

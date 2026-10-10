@@ -1,12 +1,36 @@
-# Hasher Web dietro a un reverse proxy (esempi in deploy/). Funziona con docker compose e podman-compose.
+# Hasher Web — avvio con compose (docker compose / podman-compose).
+#
+#   docker compose up -d            usa l'immagine ghcr.io/inalto/hasher-web:latest (la scarica se manca)
+#   docker compose up -d --build    la costruisce dal sorgente (Dockerfile)
+#   docker compose pull && docker compose up -d    aggiorna all'ultima versione
+#
+# La porta è pubblicata solo su 127.0.0.1: davanti serve un reverse proxy con HTTPS (esempi in deploy/);
+# HTTPS è obbligatorio per installare la PWA e per il service worker (eccetto su localhost).
+# Documentazione completa: docs/DEPLOY.md
 services:
   hasher-web:
-    build: .
     image: ghcr.io/inalto/hasher-web:latest
+    build: .
     restart: unless-stopped
-    environment:
-      HASHER_WEB_BIND: 0.0.0.0:8080
-      # HASHER_WEB_PREFIX: /hasher     # se il proxy non rimuove il prefisso del percorso
-      RUST_LOG: info
     ports:
       - "127.0.0.1:8080:8080"
+    environment:
+      HASHER_WEB_BIND: 0.0.0.0:8080
+      # Prefisso di percorso, solo se il proxy NON lo rimuove (es. /hasher). Vuoto o "/" = radice.
+      HASHER_WEB_PREFIX: ${HASHER_WEB_PREFIX:-/}
+      # info (predefinito) | debug (log d'accesso) | warn
+      RUST_LOG: ${RUST_LOG:-info}
+    # L'immagine non ha shell: il controllo è il binario stesso. Dichiararlo qui funziona anche con podman,
+    # che scarta l'HEALTHCHECK dell'immagine se questa non è in formato docker.
+    healthcheck:
+      test: ["CMD", "/hasher-web-server", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    # Il server non scrive nulla su disco e non ha bisogno di privilegi.
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

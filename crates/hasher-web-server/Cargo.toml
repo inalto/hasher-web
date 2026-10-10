@@ -6,17 +6,28 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 publish.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[lib]
+name = "hasher_web_server"
+path = "src/lib.rs"
 
 [[bin]]
 name = "hasher-web-server"
 path = "src/main.rs"
 
 [dependencies]
-axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net"] }
+# Solo HTTP/1.1: il reverse proxy parla HTTP/1.1 col contenitore; niente json/form/query (nessuna API).
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "time", "sync"] }
 tower-http = { version = "0.7", features = ["trace", "set-header"] }
 # In release i file di `dist/` sono embeddati nel binario; in debug vengono letti dal disco a ogni richiesta.
 rust-embed = { version = "8", features = ["include-exclude"] }
 mime_guess = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+# `ServiceExt::oneshot` per provare il router senza aprire socket.
+tower = { version = "0.5", features = ["util"] }

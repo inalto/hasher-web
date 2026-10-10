@@ -1,0 +1,95 @@
+# Hasher Web dietro a nginx con certificati Let's Encrypt.
+#
+# HTTPS è OBBLIGATORIO per la PWA (installazione come app e service worker); fa eccezione solo
+# http://localhost. Senza HTTPS l'app funziona come pagina web ma non è installabile e non lavora offline.
+#
+# Uso: copia il file in /etc/nginx/conf.d/hasher.conf (o sites-available), sostituisci
+# hasher.example.com, ottieni il certificato (es. `certbot certonly --webroot -w /var/www/letsencrypt
+# -d hasher.example.com`) e ricarica nginx: `nginx -t && systemctl reload nginx`.
+#
+# Il contenitore ascolta su 127.0.0.1:8080 (vedi compose.yaml).
+
+# Collegamento persistente verso il contenitore (keep-alive riduce le connessioni per ogni file).
+upstream hasher_web {
+    server 127.0.0.1:8080;
+    keepalive 8;
+}
+
+# --- http → https (e sfida ACME per Let's Encrypt) ------------------------------------------------
+server {
+    listen 80;
+    listen [::]:80;
+    server_name hasher.example.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# --- Hasher Web alla radice del dominio ------------------------------------------------------------
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;                      # nginx >= 1.25.1; con versioni precedenti: `listen 443 ssl http2;`
+    server_name hasher.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/hasher.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/hasher.example.com/privkey.pem;
+
+    server_tokens off;
+
+    # HSTS: il browser userà sempre HTTPS. Gli altri header di sicurezza (CSP, nosniff,
+    # Referrer-Policy, Permissions-Policy) li invia già il server: non vanno ripetuti qui.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # I file sono già precompressi (.br/.gz) dal server, che sceglie la variante in base ad
+    # Accept-Encoding: nginx non deve ricomprimere (gzip off) né modificare i corpi.
+    gzip off;
+
+    location / {
+        proxy_pass http://hasher_web;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";                         # keep-alive verso l'upstream
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Accept-Encoding $http_accept_encoding; # il server sceglie br/gzip/non compresso
+        # Nessuna impostazione particolare di buffering: i file sono statici e piccoli (il .wasm più grande
+        # è di qualche MB); i valori predefiniti di nginx vanno bene. Niente proxy_cache: ci pensano
+        # ETag e Cache-Control del server.
+    }
+}
+
+# --- Variante sotto-percorso: https://example.com/hasher/ ------------------------------------------
+# (da usare al posto del `location /` sopra, in un server che serve anche altro). Scegli UNA modalità.
+#
+# a) nginx toglie il prefisso e il server resta alla radice (nessun HASHER_WEB_PREFIX).
+#    Nota la barra finale in `proxy_pass`; nginx rimanda da solo `/hasher` a `/hasher/`.
+#
+#     location /hasher/ {
+#         proxy_pass http://hasher_web/;
+#         proxy_http_version 1.1;
+#         proxy_set_header Connection "";
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto $scheme;
+#         proxy_set_header Accept-Encoding $http_accept_encoding;
+#     }
+#
+# b) nginx passa il percorso invariato e il server lo conosce: avvia il contenitore con
+#    HASHER_WEB_PREFIX=/hasher. Qui `proxy_pass` NON ha né URI né barra finale (anche in questo caso
+#    nginx rimanda da solo `/hasher` a `/hasher/`).
+#
+#     location /hasher/ {
+#         proxy_pass http://hasher_web;
+#         proxy_http_version 1.1;
+#         proxy_set_header Connection "";
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto $scheme;
+#         proxy_set_header Accept-Encoding $http_accept_encoding;
+#     }

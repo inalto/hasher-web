@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Formatting, lint (native and wasm32) and tests — always on a GitHub-hosted runner (safe for PRs from forks).
+  check:
+    name: fmt / clippy / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      # Native crates (hasher-web-app is an empty `main` on native targets).
+      - name: cargo clippy (native)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The interface and the Web Worker only exist for wasm32.
+      - name: cargo clippy (wasm32, app)
+        run: cargo clippy --target wasm32-unknown-unknown -p hasher-web-app -- -D warnings
+
+      - name: cargo clippy (wasm32, core worker)
+        run: cargo clippy --target wasm32-unknown-unknown -p hasher-core --features worker -- -D warnings
+
+      # default-members: hasher-core and hasher-web-server.
+      - name: cargo test
+        run: cargo test
+
+  # Full pipeline: wasm app + worker -> dist/ -> release server binary with dist/ embedded.
+  build:
+    name: build (web + server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-web-build
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: web-build
+
+      - name: Build dist/ (scripts/build-web.sh)
+        run: scripts/build-web.sh
+
+      - name: Build the server (release, dist/ embedded)
+        run: cargo build --release -p hasher-web-server
+
+      # Starts the real binary and checks the contract: healthz, index, wasm MIME, brotli, security headers,
+      # and that the .br/.gz variants are never served as resources of their own.
+      - name: Smoke test
+        run: |
+          BASE=http://127.0.0.1:8080
+          HASHER_WEB_BIND=127.0.0.1:8080 target/release/hasher-web-server &
+          SERVER_PID=$!
+          trap 'kill ${SERVER_PID}' EXIT
+          for _ in $(seq 1 20); do
+            target/release/hasher-web-server --healthcheck && break
+            sleep 0.5
+          done
+          target/release/hasher-web-server --healthcheck
+          curl -fsS "${BASE}/" -o index.html
+          grep -qi '<canvas' index.html
+          WASM_HEADERS="$(curl -fsSI "${BASE}/app_bg.wasm")"
+          echo "${WASM_HEADERS}"
+          grep -qi '^content-type: application/wasm' <<< "${WASM_HEADERS}"
+          BR_HEADERS="$(curl -fsSI -H 'Accept-Encoding: br' "${BASE}/app_bg.wasm")"
+          grep -qi '^content-encoding: br' <<< "${BR_HEADERS}"
+          grep -qi '^content-security-policy: ' <<< "${WASM_HEADERS}"
+          test "$(curl -s -o /dev/null -w '%{http_code}' "${BASE}/app_bg.wasm.br")" = 404
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hasher-web-server-linux-x86_64
+          path: target/release/hasher-web-server
+          if-no-files-found: error
+
+  # Builds the image from the Dockerfile and publishes it to GHCR. Only on pushes to main, never on pull
+  # requests (the GITHUB_TOKEN of a fork PR cannot push, and untrusted code must not reach the registry).
+  docker:
+    name: docker image (GHCR)
+    if: github.event_name == 'push'
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/inalto/hasher-web
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            CARGO_BUILD_JOBS=4
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
