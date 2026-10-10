@@ -1,0 +1,6 @@
+/target
+/dist/*
+!/dist/.gitkeep
+*.log
+.DS_Store
+node_modules

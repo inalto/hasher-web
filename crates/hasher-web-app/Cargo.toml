@@ -1,0 +1,78 @@
+[package]
+name = "hasher-web-app"
+description = "Hasher — interfaccia egui compilata in WebAssembly (PWA)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "hasher-web-app"
+path = "src/main.rs"
+
+[dependencies]
+hasher-core.workspace = true
+log.workspace = true
+
+# Tutto il resto esiste solo per wasm32: nativamente il crate è un `main` vuoto (così
+# `cargo check --workspace` resta rapido e winit non viene compilato per Linux).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# GUI (stessa versione del desktop; sul web eframe usa WebGL2 tramite `glow`)
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow"] }
+egui = "0.36"
+egui_extras = { version = "0.36", features = ["svg"] }
+egui-phosphor = "0.14"
+
+# Dati / i18n
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+hex.workspace = true
+humansize.workspace = true
+rust-i18n = "4.2"
+
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = [
+    "AddEventListenerOptions",
+    "Blob",
+    "BlobPropertyBag",
+    "CustomEvent",
+    "DataTransfer",
+    "DataTransferItem",
+    "DataTransferItemList",
+    "Document",
+    "DragEvent",
+    "Element",
+    "Event",
+    "EventTarget",
+    "File",
+    "FileList",
+    "FileSystemDirectoryEntry",
+    "FileSystemDirectoryReader",
+    "FileSystemEntry",
+    "FileSystemFileEntry",
+    "HtmlAnchorElement",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "HtmlInputElement",
+    "KeyboardEvent",
+    "Location",
+    "MessageEvent",
+    "Navigator",
+    "Storage",
+    "Url",
+    "Window",
+    "Worker",
+    "WorkerOptions",
+    "WorkerType",
+    "console",
+] }
+console_error_panic_hook = "0.1"
+console_log = "1"
+# `std::time::Instant` panica su wasm32: `web_time::Instant` è un sostituto drop-in.
+web-time = "1.1"
+sys-locale = { version = "0.3", features = ["js"] }

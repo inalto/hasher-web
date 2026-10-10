@@ -1,0 +1,32 @@
+{
+  "id": "./",
+  "name": "Hasher",
+  "short_name": "Hasher",
+  "description": "Calcola e verifica gli hash dei tuoi file, direttamente nel browser. Nessun file viene inviato online.",
+  "lang": "it",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#F4F7FB",
+  "theme_color": "#144781",
+  "categories": ["utilities", "productivity"],
+  "icons": [
+    { "src": "icons/icon-64.png", "sizes": "64x64", "type": "image/png" },
+    { "src": "icons/icon-128.png", "sizes": "128x128", "type": "image/png" },
+    { "src": "icons/icon-256.png", "sizes": "256x256", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "launch_handler": { "client_mode": "focus-existing" },
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "text/plain": [".md5", ".sha1", ".sha256", ".sha512", ".sfv", ".sha3-256", ".sha3-512", ".b2", ".blake3", ".ed2k", ".crc32", ".sum", ".checksum"]
+      }
+    }
+  ]
+}

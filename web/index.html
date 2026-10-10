@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Hasher</title>
+  <meta name="description" content="Calcola e verifica gli hash dei tuoi file, direttamente nel browser. Nessun file viene inviato online.">
+  <meta name="application-name" content="Hasher">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#144781">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0E1526">
+  <meta name="color-scheme" content="light dark">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-256.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <noscript>
+    <div class="noscript">Hasher ha bisogno di JavaScript e WebAssembly per calcolare gli hash nel browser.</div>
+  </noscript>
+  <!-- Splash mostrato finché l'app wasm non è avviata (rimosso da Rust). -->
+  <div id="splash" aria-busy="true">
+    <img src="icons/icon-256.png" width="72" height="72" alt="">
+    <div class="spinner"></div>
+    <p class="brand">Hasher <span>Martini Multimedia</span></p>
+  </div>
+  <!-- eframe disegna tutta l'interfaccia su questo canvas (WebGL2). -->
+  <canvas id="hasher_canvas"></canvas>
+  <script type="module" src="boot.js"></script>
+</body>
+</html>

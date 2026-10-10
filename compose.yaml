@@ -1,0 +1,12 @@
+# Hasher Web dietro a un reverse proxy (esempi in deploy/). Funziona con docker compose e podman-compose.
+services:
+  hasher-web:
+    build: .
+    image: ghcr.io/inalto/hasher-web:latest
+    restart: unless-stopped
+    environment:
+      HASHER_WEB_BIND: 0.0.0.0:8080
+      # HASHER_WEB_PREFIX: /hasher     # se il proxy non rimuove il prefisso del percorso
+      RUST_LOG: info
+    ports:
+      - "127.0.0.1:8080:8080"

@@ -1,0 +1,16 @@
+/* Pagina ospite dell'app egui: sfondo e canvas a tutto schermo, splash iniziale. */
+:root { color-scheme: light dark; --bg: #F4F7FB; --fg: #151F35; --muted: #5B6B82; --primary: #144781; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0E1526; --fg: #E6ECF4; --muted: #9AAAC2; --primary: #4F86C6; } }
+html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+#hasher_canvas { position: absolute; inset: 0; width: 100%; height: 100%; outline: none; touch-action: none; }
+#splash { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 18px; background: var(--bg); z-index: 10; }
+#splash .brand { margin: 0; font-weight: 700; font-size: 20px; }
+#splash .brand span { display: block; font-weight: 400; font-size: 12px; color: var(--muted); text-align: center; }
+#splash .error { color: #C8433F; max-width: 36em; text-align: center; font-size: 14px; }
+.spinner { width: 26px; height: 26px; border: 3px solid color-mix(in srgb, var(--primary) 25%, transparent);
+  border-top-color: var(--primary); border-radius: 50%; animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.noscript { position: absolute; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+  padding: 24px; text-align: center; background: var(--bg); }

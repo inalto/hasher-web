@@ -1,0 +1,8 @@
+# Macchina di sviluppo con poca memoria: compilazioni a 2 job (vedi docs/PIANO.md §6).
+[build]
+jobs = 2
+
+# Il crate dell'interfaccia si compila solo per il web:
+#   cargo build --target wasm32-unknown-unknown -p hasher-web-app
+# [target.wasm32-unknown-unknown]
+# rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]   # solo se `getrandom` 0.3 compare nel grafo
