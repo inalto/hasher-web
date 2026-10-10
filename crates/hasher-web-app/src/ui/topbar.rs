@@ -4,13 +4,13 @@
 use super::theme::{self, pal};
 use super::widgets::{self, IconButton, ToastKind};
 use super::{Action, HasherApp, HelpTab};
-use crate::backend::algo::{Algo, AlgoGroup};
-use crate::backend::settings::ThemeMode;
+use crate::settings::ThemeMode;
 use egui::containers::menu::{MenuButton, MenuConfig};
 use egui::{
     Align, Button, Frame, Key, KeyboardShortcut, Layout, Margin, Modifiers, PopupCloseBehavior, RichText, Ui, Vec2,
 };
 use egui_phosphor::regular as icons;
+use hasher_core::algo::{Algo, AlgoGroup};
 use rust_i18n::t;
 
 /// Gruppi di algoritmi, nell'ordine di presentazione, divisi in due colonne bilanciate.
@@ -138,10 +138,6 @@ fn menus(app: &mut HasherApp, ui: &mut Ui) {
                     app.actions.push(Action::ClearList);
                 }
             });
-            ui.separator();
-            if menu_item(ui, icons::SIGN_OUT, t!("menu.quit"), None) {
-                app.actions.push(Action::Quit);
-            }
         });
         ui.menu_button(RichText::new(t!("menu.tools")).font(theme::font_medium(14.0)), |ui| {
             if menu_item(
@@ -186,6 +182,12 @@ fn menus(app: &mut HasherApp, ui: &mut Ui) {
             }
             if menu_item(ui, icons::KEYBOARD, t!("menu.shortcuts"), None) {
                 app.actions.push(Action::OpenHelp(HelpTab::Shortcuts));
+            }
+            if app.can_install {
+                ui.separator();
+                if menu_item(ui, icons::DOWNLOAD_SIMPLE, t!("menu.install"), None) {
+                    app.actions.push(Action::Install);
+                }
             }
             ui.separator();
             if menu_item(ui, icons::INFO, t!("menu.about"), None) {
@@ -305,9 +307,5 @@ fn algo_selector(app: &mut HasherApp, ui: &mut Ui) {
             });
         });
     });
-    if app.ui.open_algo_menu {
-        app.ui.open_algo_menu = false;
-        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
-    }
     resp.on_hover_text(t!("app.algos_tooltip"));
 }

@@ -4,10 +4,10 @@ use super::theme::{self, pal};
 use super::topbar::{algos_in, group_label, GROUP_COLUMNS};
 use super::widgets::{self, Btn};
 use super::{apply_language, HasherApp};
-use crate::backend::algo::Algo;
-use crate::backend::settings::{Language, Settings, ThemeMode};
+use crate::settings::{Language, Settings, ThemeMode};
 use egui::{Align, Align2, Context, Frame, Id, Label, Layout, Margin, RichText, ScrollArea, Slider, Ui, Vec2};
 use egui_phosphor::regular as icons;
+use hasher_core::algo::Algo;
 use rust_i18n::t;
 
 fn section(ui: &mut Ui, icon: &str, title: impl Into<String>, add: impl FnOnce(&mut Ui)) {
@@ -38,10 +38,8 @@ pub(crate) fn window(app: &mut HasherApp, ctx: &Context) {
     let mut cancel = false;
     let screen = ctx.content_rect();
     let height = (screen.height() - 120.0).clamp(300.0, 640.0);
-    let path = super::guard(Settings::path)
-        .map(|p| p.display().to_string())
-        .unwrap_or_default();
-    let portable = super::guard(Settings::is_portable).unwrap_or(false);
+    // Sul web le impostazioni vivono in `localStorage` (stesso JSON del file del desktop).
+    let path = format!("localStorage · {}", crate::settings::STORAGE_KEY);
 
     egui::Window::new(RichText::new(t!("settings.title")).font(theme::font_semibold(17.0)))
         .id(Id::new("hasher.settings.window"))
@@ -85,11 +83,8 @@ pub(crate) fn window(app: &mut HasherApp, ctx: &Context) {
                 .on_hover_text(path.as_str());
             });
             ui.horizontal(|ui| {
-                if portable {
-                    widgets::icon_badge(ui, icons::USB, t!("settings.portable"), p.success);
-                } else {
-                    widgets::icon_badge(ui, icons::USER, t!("settings.user_profile"), p.accent);
-                }
+                widgets::icon_badge(ui, icons::BROWSER, t!("settings.browser_storage"), p.accent)
+                    .on_hover_text(t!("settings.browser_storage_hint"));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui.add(Btn::primary(t!("settings.save")).icon(icons::CHECK)).clicked() {
                         save = true;
@@ -240,12 +235,6 @@ fn body(ui: &mut Ui, draft: &mut Settings) {
             &t!("settings.recurse"),
             &t!("settings.recurse_hint"),
             &mut draft.recurse_folders,
-        );
-        widgets::toggle_row(
-            ui,
-            &t!("settings.symlinks"),
-            &t!("settings.symlinks_hint"),
-            &mut draft.follow_symlinks,
         );
         widgets::toggle_row(
             ui,

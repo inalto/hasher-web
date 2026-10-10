@@ -11,12 +11,12 @@ use super::single;
 use super::theme::{self, pal, RADIUS_CARD};
 use super::widgets::{self, Btn, IconButton, Verdict};
 use super::{Action, EntryState, HasherApp};
-use crate::backend::algo::Algo;
 use egui::{
     Align, Align2, Color32, CornerRadius, Frame, Id, Layout, Margin, Pos2, Rect, RichText, ScrollArea, Sense, Shadow,
     Stroke, TextEdit, Ui, UiBuilder, Vec2,
 };
 use egui_phosphor::regular as icons;
+use hasher_core::algo::Algo;
 use rust_i18n::t;
 
 const ROW_H: f32 = 46.0;
@@ -477,7 +477,9 @@ fn row(
         let text_w = nr.right() - text_left;
         let name_g = widgets::truncated_galley(ui, &e.name, theme::font_medium(14.0), p.text, text_w);
         let dir_g = widgets::truncated_galley(ui, &e.dir_text, theme::font_regular(11.5), p.text_faint, text_w);
-        let block_h = name_g.size().y + dir_g.size().y;
+        // Sul web i file aperti singolarmente non hanno cartella: il nome resta centrato.
+        let dir_h = if e.dir_text.is_empty() { 0.0 } else { dir_g.size().y };
+        let block_h = name_g.size().y + dir_h;
         let y0 = nr.center().y - block_h / 2.0;
         ui.painter().galley(Pos2::new(text_left, y0), name_g, p.text);
         ui.painter()
@@ -632,11 +634,6 @@ fn row(
         }
         if e.is_done() && ui.button(t!("single.copy_all")).clicked() {
             app.actions.push(Action::CopyAll(id));
-        }
-        if let Some(parent) = e.path.parent() {
-            if ui.button(t!("single.open_folder")).clicked() {
-                app.actions.push(Action::OpenDir(parent.to_path_buf()));
-            }
         }
         ui.separator();
         if ui.button(t!("list.remove")).clicked() {

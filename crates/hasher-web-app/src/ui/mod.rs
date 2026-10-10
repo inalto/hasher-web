@@ -2,7 +2,12 @@
 //!
 //! Le viste (`topbar`, `single`, `list`, `verify`, …) leggono lo stato di [`HasherApp`] e
 //! accodano [`Action`] che vengono eseguite a fine frame, così il codice di disegno resta
-//! separato dagli effetti (dialoghi nativi, avvio del motore, salvataggi).
+//! separato dagli effetti (dialoghi del browser, avvio del motore, salvataggi).
+//!
+//! Port web dell'interfaccia del desktop: i file arrivano dal modulo `web` (trascinamento,
+//! dialoghi, apertura dal sistema) come [`InputBatch`] già espansi, il motore è un gruppo di
+//! Web Worker ([`WebEngine`]) e i percorsi sono relativi (nome del file o percorso dentro la
+//! cartella trascinata).
 
 mod anim;
 mod dropzone;
@@ -18,15 +23,15 @@ mod topbar;
 mod verify;
 mod widgets;
 
-use crate::backend::algo::{normalize_hex, Algo};
-use crate::backend::checksum_file::{self, ChecksumEntry};
-use crate::backend::engine::{self, EngineConfig, EngineEvent, EngineHandle, FileId, FileResult};
-use crate::backend::settings::{Language, Settings, ThemeMode, WindowState};
-use crossbeam_channel::Receiver;
-use egui::{Context, Event, Key, Modifiers, Ui, ViewportCommand};
+use crate::engine::{EngineConfig, EngineEvent, EngineHandle, EventQueue, FileId, FileResult, WebEngine, WebInput};
+use crate::settings::{Language, Settings, ThemeMode};
+use crate::web::picker::PickKind;
+use crate::web::{self, Bridge, ChecksumBytes, InputBatch, WalkOptions};
+use egui::{Context, Event, Key, Modifiers, Ui};
+use hasher_core::algo::{normalize_hex, Algo};
+use hasher_core::checksum_file::{self, ChecksumEntry};
 use rust_i18n::t;
 use std::collections::HashMap;
-use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use widgets::{ToastKind, Verdict};
@@ -34,113 +39,18 @@ use widgets::{ToastKind, Verdict};
 /// Valore segnaposto dei metadati non ancora letti (mostrato come scheletro animato).
 pub(crate) const PENDING_VALUE: &str = "\u{2026}";
 
-/// Argomenti da riga di comando: file da aprire subito e hook per i test grafici headless.
-#[derive(Debug, Clone, Default)]
-pub struct CliArgs {
-    pub files: Vec<PathBuf>,
-    /// Se impostato, l'app salva uno screenshot PNG in questo percorso dopo `screenshot_after_frames`
-    /// frame (o appena terminato il calcolo dei file passati) e poi esce. Usato dai test con Xvfb.
-    pub screenshot: Option<PathBuf>,
-    pub screenshot_after_frames: u32,
-}
-
-impl CliArgs {
-    pub fn parse() -> CliArgs {
-        let mut args = CliArgs {
-            screenshot_after_frames: 30,
-            ..Default::default()
-        };
-        let mut it = std::env::args_os().skip(1);
-        while let Some(a) = it.next() {
-            match a.to_str() {
-                Some("--screenshot") => args.screenshot = it.next().map(PathBuf::from),
-                Some("--screenshot-frames") => {
-                    args.screenshot_after_frames = it.next().and_then(|v| v.to_str()?.parse().ok()).unwrap_or(30)
-                }
-                _ => args.files.push(PathBuf::from(a)),
-            }
-        }
-        args
-    }
-}
-
-/// Avvia l'applicazione (finestra nativa). Blocca fino alla chiusura.
-pub fn run(args: CliArgs) -> eframe::Result {
-    let settings = load_settings();
-    let screenshot_mode = args.screenshot.is_some();
-
-    let mut viewport = egui::ViewportBuilder::default()
-        .with_title(crate::APP_NAME)
-        .with_app_id("hasher")
-        .with_inner_size([1100.0, 760.0])
-        .with_min_inner_size([760.0, 520.0])
-        .with_drag_and_drop(true);
-    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../../assets/icons/icon-256.png")) {
-        viewport = viewport.with_icon(icon);
-    }
-    if !screenshot_mode {
-        if let Some(w) = settings.window.filter(window_state_is_sane) {
-            viewport = viewport
-                .with_inner_size([w.width, w.height])
-                .with_maximized(w.maximized);
-            viewport = viewport.with_position([w.x, w.y]);
-        }
-    }
-
-    let options = eframe::NativeOptions {
-        viewport,
-        ..Default::default()
-    };
-    eframe::run_native(
-        crate::APP_NAME,
-        options,
-        Box::new(move |cc| Ok(Box::new(HasherApp::new(cc, args, settings)))),
-    )
-}
-
-fn window_state_is_sane(w: &WindowState) -> bool {
-    w.width.is_finite()
-        && w.height.is_finite()
-        && w.width >= 400.0
-        && w.height >= 300.0
-        && w.width <= 16_000.0
-        && w.height <= 16_000.0
-        && (-8_000.0..=16_000.0).contains(&w.x)
-        && (-8_000.0..=16_000.0).contains(&w.y)
-}
-
-/// Carica le impostazioni proteggendosi da panic (backend non ancora pronto o file corrotto).
-fn load_settings() -> Settings {
-    match std::panic::catch_unwind(Settings::load) {
-        Ok(s) => s,
-        Err(_) => {
-            log::warn!("Settings::load non disponibile: uso i valori predefiniti");
-            Settings::default()
-        }
-    }
-}
-
-/// Esegue una chiamata al backend intercettando eventuali panic (stub `todo!()` durante lo
-/// sviluppo, bug imprevisti): l'interfaccia mostra un errore invece di chiudersi.
-pub(crate) fn guard<T>(f: impl FnOnce() -> T) -> Result<T, String> {
-    std::panic::catch_unwind(AssertUnwindSafe(f)).map_err(|e| {
-        e.downcast_ref::<&str>()
-            .map(|s| (*s).to_owned())
-            .or_else(|| e.downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "panic".to_owned())
-    })
-}
-
-/// Codice lingua effettivo.
+/// Codice lingua effettivo (per `Auto`, la lingua del browser).
 pub(crate) fn resolve_language(lang: Language) -> &'static str {
-    // `Language::resolve` interroga il sistema per `Auto`: se fallisse (stub non ancora
-    // implementato) si ricade sull'inglese.
-    std::panic::catch_unwind(AssertUnwindSafe(|| lang.resolve())).unwrap_or("en")
+    lang.resolve()
 }
 
-/// Applica la lingua all'intera interfaccia.
+/// Applica la lingua all'intera interfaccia (e all'attributo `lang` della pagina).
 pub(crate) fn apply_language(lang: Language) {
-    rust_i18n::set_locale(resolve_language(lang));
+    let code = resolve_language(lang);
+    rust_i18n::set_locale(code);
+    if let Some(root) = web::document().and_then(|d| d.document_element()) {
+        let _ = root.set_attribute("lang", code);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -325,14 +235,15 @@ pub(crate) enum CheckStatus {
 #[derive(Debug, Clone)]
 pub(crate) struct ChecksumRow {
     pub entry: ChecksumEntry,
+    /// Percorso relativo del file trovato fra quelli disponibili (o quello atteso, se manca).
     pub resolved: PathBuf,
-    pub canonical: Option<PathBuf>,
     pub file_id: Option<FileId>,
     pub status: CheckStatus,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct ChecksumSession {
+    /// Percorso relativo del (primo) file di checksum.
     pub path: PathBuf,
     pub name: String,
     pub rows: Vec<ChecksumRow>,
@@ -382,7 +293,7 @@ pub(crate) enum RunStatus {
 
 struct Session {
     handle: EngineHandle,
-    rx: Receiver<EngineEvent>,
+    rx: EventQueue,
 }
 
 /// Misura della velocità complessiva (media esponenziale).
@@ -459,37 +370,18 @@ pub(crate) enum Action {
     ResumeCancelled,
     ResetAlgos,
     ToggleAlgo(Algo),
-    Quit,
+    /// Prompt di installazione della PWA.
+    Install,
     Copy {
         text: String,
         toast: String,
     },
     CopyAll(FileId),
-    OpenDir(PathBuf),
     RowClick {
         id: FileId,
         mods: Modifiers,
     },
     ToggleExpand(FileId),
-}
-
-/// Hook per gli screenshot dei test headless.
-#[derive(Debug, Default)]
-struct ShotHook {
-    path: Option<PathBuf>,
-    after_frames: u32,
-    frames: u32,
-    wait_done: bool,
-    done_at: Option<f64>,
-    requested: bool,
-    started: Option<f64>,
-    /// Comandi di `HASHER_UI` da eseguire a calcolo terminato (aprire finestre, selezionare righe).
-    deferred: Vec<String>,
-    deferred_at: Option<f64>,
-    /// Mostra la sovrimpressione di trascinamento (verifica grafica senza un vero drag & drop).
-    force_overlay: bool,
-    /// Annulla il calcolo dopo 40 frame (verifica grafica dello stato "annullato").
-    cancel_early: bool,
 }
 
 /// Stato delle finestre e dei controlli dell'interfaccia.
@@ -504,8 +396,6 @@ pub(crate) struct UiState {
     pub column_algo: Algo,
     pub filter: String,
     pub last_clicked: Option<FileId>,
-    /// Apre il menu degli algoritmi al prossimo frame (hook per i test grafici).
-    pub open_algo_menu: bool,
 }
 
 pub struct HasherApp {
@@ -515,8 +405,17 @@ pub struct HasherApp {
     pub(crate) entries: Vec<FileEntry>,
     index: HashMap<FileId, usize>,
     session: Option<Session>,
+    /// Motore: gruppo di Web Worker creato all'avvio.
+    engine: WebEngine,
+    /// Code condivise con i listener della pagina.
+    pub(crate) bridge: Bridge,
     /// Input dell'ultima sessione (per ricalcolare).
-    pub(crate) inputs: Vec<PathBuf>,
+    pub(crate) inputs: Vec<WebInput>,
+    /// File disponibili per percorso relativo: quelli in elenco (ricalcolo, ripresa, confronto,
+    /// risoluzione dei file di checksum).
+    known: HashMap<PathBuf, WebInput>,
+    /// Il browser consente l'installazione come app (aggiornato a ogni frame).
+    pub(crate) can_install: bool,
     /// Vista elenco anche con un solo file (cartelle, più input).
     pub(crate) multi: bool,
     pub(crate) status: RunStatus,
@@ -537,29 +436,17 @@ pub struct HasherApp {
     id_base: FileId,
     verdicts_dirty: bool,
     hex_uppercase: bool,
-    theme_override: Option<ThemeMode>,
     applied_theme: Option<(ThemeMode, bool)>,
-    window: Option<WindowState>,
-    shot: ShotHook,
     /// Notifiche generate fuori dal frame (senza `Context`), mostrate come toast.
     notices: Vec<(ToastKind, String)>,
 }
 
 impl HasherApp {
-    fn new(cc: &eframe::CreationContext<'_>, args: CliArgs, settings: Settings) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, settings: Settings, bridge: Bridge) -> Self {
         let ctx = &cc.egui_ctx;
         egui_extras::install_image_loaders(ctx);
         theme::install_fonts(ctx);
         apply_language(settings.language);
-
-        let theme_override = std::env::var("HASHER_THEME")
-            .ok()
-            .and_then(|v| match v.to_ascii_lowercase().as_str() {
-                "light" => Some(ThemeMode::Light),
-                "dark" => Some(ThemeMode::Dark),
-                "system" => Some(ThemeMode::System),
-                _ => None,
-            });
 
         let mut algos: Vec<Algo> = Algo::ALL
             .iter()
@@ -575,16 +462,20 @@ impl HasherApp {
             algos[0]
         };
         let export = export::ExportDialog::from_settings(&settings);
+        let engine = WebEngine::new(ctx, settings.parallel_files);
 
         let mut app = HasherApp {
             hex_uppercase: settings.uppercase_hex,
-            window: settings.window,
             settings,
             algos,
             entries: Vec::new(),
             index: HashMap::new(),
             session: None,
+            engine,
+            bridge,
             inputs: Vec::new(),
+            known: HashMap::new(),
+            can_install: false,
             multi: false,
             status: RunStatus::Idle,
             speed: SpeedMeter::default(),
@@ -600,7 +491,6 @@ impl HasherApp {
                 column_algo,
                 filter: String::new(),
                 last_clicked: None,
-                open_algo_menu: false,
             },
             actions: Vec::new(),
             fraction: 0.0,
@@ -611,73 +501,13 @@ impl HasherApp {
             compare_on_discover: false,
             id_base: 0,
             verdicts_dirty: false,
-            theme_override,
             applied_theme: None,
             notices: Vec::new(),
-            shot: ShotHook {
-                wait_done: !args.files.is_empty(),
-                path: args.screenshot.clone(),
-                after_frames: args.screenshot_after_frames.max(1),
-                ..Default::default()
-            },
         };
         app.apply_theme(ctx);
-        app.apply_ui_env();
-
-        if !args.files.is_empty() {
-            app.open_paths(args.files, Modifiers::NONE);
-        }
+        // File aperti dal sistema ("Apri con Hasher") prima che l'app fosse pronta.
+        web::launch::take_pending(&app.bridge);
         app
-    }
-
-    /// Variabili d'ambiente per i test grafici headless (screenshot di finestre e stati):
-    /// `HASHER_VERIFY_INPUT=<hash>` precompila il campo di verifica; `HASHER_UI=a,b,…` con
-    /// `settings`, `help`, `shortcuts`, `about`, `verify`, `overlay`, `algos`, `cancel`, `nowait` (screenshot dopo
-    /// `--screenshot-frames` frame anche se il calcolo è in corso), `export`, `select=0+1`,
-    /// `expand=0` (gli ultimi tre vengono eseguiti a calcolo terminato).
-    fn apply_ui_env(&mut self) {
-        if let Ok(v) = std::env::var("HASHER_VERIFY_INPUT") {
-            self.verify.input = v;
-            self.verify_open = true;
-        }
-        let Ok(v) = std::env::var("HASHER_UI") else { return };
-        for cmd in v.split(',').map(str::trim).filter(|c| !c.is_empty()) {
-            match cmd {
-                "settings" => self.actions.push(Action::OpenSettings),
-                "help" => self.actions.push(Action::OpenHelp(HelpTab::Guide)),
-                "shortcuts" => self.actions.push(Action::OpenHelp(HelpTab::Shortcuts)),
-                "about" => self.actions.push(Action::OpenHelp(HelpTab::About)),
-                "verify" => self.verify_open = true,
-                "overlay" => self.shot.force_overlay = true,
-                "algos" => self.ui.open_algo_menu = true,
-                "cancel" => self.shot.cancel_early = true,
-                "nowait" => self.shot.wait_done = false,
-                other => self.shot.deferred.push(other.to_owned()),
-            }
-        }
-    }
-
-    fn run_deferred(&mut self, cmd: &str) {
-        let indices = |s: &str| -> Vec<usize> { s.split('+').filter_map(|n| n.trim().parse().ok()).collect() };
-        if cmd == "export" {
-            self.actions.push(Action::ShowExport);
-        } else if let Some(list) = cmd.strip_prefix("select=") {
-            let idx = indices(list);
-            for (i, e) in self.entries.iter_mut().enumerate() {
-                e.selected = idx.contains(&i);
-            }
-            if self.compare_pair().is_some() {
-                self.verify_open = true;
-            }
-        } else if let Some(list) = cmd.strip_prefix("expand=") {
-            for i in indices(list) {
-                if let Some(e) = self.entries.get_mut(i) {
-                    e.expanded = true;
-                }
-            }
-        } else {
-            log::warn!("HASHER_UI: comando sconosciuto {cmd}");
-        }
     }
 
     // -----------------------------------------------------------------------------------------
@@ -694,7 +524,7 @@ impl HasherApp {
         {
             return draft.theme;
         }
-        self.theme_override.unwrap_or(self.settings.theme)
+        self.settings.theme
     }
 
     fn effective_animations(&self) -> bool {
@@ -712,24 +542,12 @@ impl HasherApp {
         }
     }
 
-    /// Salva le impostazioni su disco; in caso di errore mostra un toast se richiesto.
+    /// Salva le impostazioni nel browser; in caso di errore mostra un toast se richiesto.
     pub(crate) fn save_settings(&mut self, ctx: &Context, notify: bool) -> bool {
-        if self.shot.path.is_some() {
-            // Nei test headless non si tocca il file impostazioni.
-            return true;
-        }
-        let res = guard(|| self.settings.save());
-        match res {
-            Ok(Ok(())) => true,
-            Ok(Err(e)) => {
-                log::warn!("salvataggio impostazioni fallito: {e}");
-                if notify {
-                    widgets::toast(ctx, ToastKind::Error, t!("toast.settings_error", error = e.to_string()));
-                }
-                false
-            }
+        match self.settings.save() {
+            Ok(()) => true,
             Err(e) => {
-                log::warn!("salvataggio impostazioni non disponibile: {e}");
+                log::warn!("salvataggio impostazioni fallito: {e}");
                 if notify {
                     widgets::toast(ctx, ToastKind::Error, t!("toast.settings_error", error = e));
                 }
@@ -756,37 +574,54 @@ impl HasherApp {
         self.session.is_some()
     }
 
-    /// Apre file o cartelle (trascinati, da dialogo o da riga di comando).
-    pub(crate) fn open_paths(&mut self, paths: Vec<PathBuf>, mods: Modifiers) {
-        let paths: Vec<PathBuf> = paths.into_iter().filter(|p| !p.as_os_str().is_empty()).collect();
-        if paths.is_empty() {
+    /// Apre un gruppo di file (trascinati, da dialogo o aperti dal sistema).
+    ///
+    /// Come sul desktop: un file di checksum avvia la verifica dei file elencati (sul web cercati
+    /// fra quelli rilasciati insieme e quelli già in elenco); Shift confronta il file rilasciato
+    /// con l'ultimo dell'elenco; Ctrl con due file li confronta.
+    pub(crate) fn open_batch(&mut self, batch: InputBatch, current_mods: Modifiers) {
+        let mods = batch.mods.unwrap_or(current_mods);
+        let InputBatch {
+            inputs,
+            origin,
+            had_dirs,
+            checksums,
+            ..
+        } = batch;
+        log::debug!(
+            "{} file ({origin:?}), {} file di checksum, cartelle: {had_dirs}",
+            inputs.len(),
+            checksums.len()
+        );
+        if !checksums.is_empty() && self.load_checksum(checksums, inputs.clone()) {
             return;
         }
-        if paths.len() == 1 && paths[0].is_file() && checksum_file::is_checksum_file(&paths[0]) {
-            let p = paths[0].clone();
-            self.load_checksum(&p);
+        if inputs.is_empty() {
             return;
         }
-        if mods.shift && paths.len() == 1 && paths[0].is_file() {
-            let previous = self.entries.last().map(|e| e.path.clone());
-            if let Some(prev) = previous.filter(|p| *p != paths[0]) {
-                self.start_session(vec![prev, paths[0].clone()], StartMode::Compare);
+        if mods.shift && inputs.len() == 1 && !had_dirs {
+            let previous = self.entries.last().and_then(|e| self.known.get(&e.path).cloned());
+            if let Some(prev) = previous.filter(|p| p.rel_path != inputs[0].rel_path) {
+                let mut pair = vec![prev];
+                pair.extend(inputs);
+                self.start_session(pair, StartMode::Compare, false);
                 return;
             }
         }
-        if (mods.ctrl || mods.command) && paths.len() == 2 && paths.iter().all(|p| p.is_file()) {
-            self.start_session(paths, StartMode::Compare);
+        if (mods.ctrl || mods.command) && inputs.len() == 2 && !had_dirs {
+            self.start_session(inputs, StartMode::Compare, false);
             return;
         }
-        self.start_session(paths, StartMode::Normal);
+        self.start_session(inputs, StartMode::Normal, had_dirs);
     }
 
-    fn start_session(&mut self, paths: Vec<PathBuf>, mode: StartMode) {
-        self.start_session_ext(paths, mode, false);
+    fn start_session(&mut self, inputs: Vec<WebInput>, mode: StartMode, dirs: bool) {
+        self.start_session_ext(inputs, mode, false, dirs);
     }
 
     /// Avvia una sessione; con `keep` i file già in elenco restano (ripresa dei file annullati).
-    fn start_session_ext(&mut self, paths: Vec<PathBuf>, mode: StartMode, keep: bool) {
+    /// `dirs`: gli input vengono da cartelle (vista elenco anche con un solo file).
+    fn start_session_ext(&mut self, inputs: Vec<WebInput>, mode: StartMode, keep: bool, dirs: bool) {
         self.cancel_session();
         if keep {
             self.id_base = self.entries.iter().map(|e| e.id).max().unwrap_or(0);
@@ -794,10 +629,14 @@ impl HasherApp {
         } else {
             self.entries.clear();
             self.index.clear();
+            self.known.clear();
             self.id_base = 0;
             self.ui.last_clicked = None;
-            self.multi = paths.len() > 1 || paths.iter().any(|p| p.is_dir());
-            self.inputs = paths.clone();
+            self.multi = inputs.len() > 1 || dirs;
+            self.inputs = inputs.clone();
+        }
+        for i in &inputs {
+            self.known.insert(i.path(), i.clone());
         }
         self.compare_on_discover = mode == StartMode::Compare;
         if mode != StartMode::Checksum {
@@ -807,7 +646,7 @@ impl HasherApp {
                 let kept = keep && r.file_id.is_some_and(|id| self.index.contains_key(&id));
                 if !kept {
                     r.file_id = None;
-                    r.status = if r.resolved.is_file() {
+                    r.status = if self.known.contains_key(&r.resolved) {
                         CheckStatus::Pending
                     } else {
                         CheckStatus::Missing
@@ -832,21 +671,15 @@ impl HasherApp {
             algos,
             parallel_files: self.settings.parallel_files,
             recurse: self.settings.recurse_folders,
-            follow_symlinks: self.settings.follow_symlinks,
             include_hidden: self.settings.include_hidden,
         };
         self.fraction = 0.0;
         self.bytes_done = 0;
-        self.bytes_total = paths
-            .iter()
-            .filter_map(|p| p.metadata().ok())
-            .filter(|m| m.is_file())
-            .map(|m| m.len())
-            .sum();
+        self.bytes_total = inputs.iter().map(WebInput::size).sum();
         self.files_total = 0;
         self.files_done = 0;
         self.verdicts_dirty = true;
-        match guard(|| engine::start(paths, config)) {
+        match self.engine.start(inputs, config) {
             Ok((handle, rx)) => {
                 self.session = Some(Session { handle, rx });
                 self.status = RunStatus::Running;
@@ -855,7 +688,6 @@ impl HasherApp {
             Err(e) => {
                 log::error!("avvio del motore fallito: {e}");
                 self.status = RunStatus::Idle;
-                self.shot.done_at = Some(f64::NEG_INFINITY);
                 self.notify(ToastKind::Error, t!("toast.engine_error", error = e));
             }
         }
@@ -892,6 +724,7 @@ impl HasherApp {
         }
         self.entries.clear();
         self.index.clear();
+        self.known.clear();
         self.id_base = 0;
         self.inputs.clear();
         self.multi = false;
@@ -906,34 +739,12 @@ impl HasherApp {
         self.verdicts_dirty = true;
     }
 
-    /// Cartella del file relativa all'input che la contiene (o percorso completo della cartella).
-    fn relative_dir(&self, path: &Path) -> String {
-        let parent = path.parent().unwrap_or(Path::new(""));
-        for input in self.inputs.iter().filter(|i| i.is_dir()) {
-            if let Ok(rel) = parent.strip_prefix(input) {
-                let base = input
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let rel = rel.to_string_lossy();
-                return if rel.is_empty() {
-                    base
-                } else {
-                    format!("{base}{}{rel}", std::path::MAIN_SEPARATOR)
-                };
-            }
-        }
-        // File aperti singolarmente: le ultime due cartelle bastano a riconoscerli.
-        let parts: Vec<String> = parent
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect();
-        let sep = std::path::MAIN_SEPARATOR;
-        if parts.len() > 3 {
-            format!("…{sep}{}{sep}{}", parts[parts.len() - 2], parts[parts.len() - 1])
-        } else {
-            parent.to_string_lossy().into_owned()
-        }
+    /// Cartella del file relativa alla cartella trascinata o aperta (vuota per i file singoli:
+    /// sul web il percorso completo non è disponibile).
+    fn relative_dir(path: &Path) -> String {
+        path.parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
     }
 
     fn rebuild_index(&mut self) {
@@ -964,21 +775,12 @@ impl HasherApp {
         let now = anim::now(ctx);
         let mut events = Vec::new();
         if let Some(s) = &self.session {
-            while events.len() < 50_000 {
-                match s.rx.try_recv() {
-                    Ok(ev) => events.push(ev),
-                    Err(crossbeam_channel::TryRecvError::Empty) => break,
-                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                        if !events.iter().any(|e| matches!(e, EngineEvent::AllDone { .. })) {
-                            // Il motore è terminato senza `AllDone` (es. panic in un thread).
-                            events.push(EngineEvent::AllDone {
-                                files_ok: 0,
-                                files_failed: 0,
-                                cancelled: s.handle.is_cancelled(),
-                                elapsed: Duration::ZERO,
-                            });
-                        }
-                        break;
+            {
+                let mut rx = s.rx.borrow_mut();
+                while events.len() < 50_000 {
+                    match rx.pop_front() {
+                        Some(ev) => events.push(ev),
+                        None => break,
                     }
                 }
             }
@@ -1028,7 +830,7 @@ impl HasherApp {
                 }
                 self.index.insert(id, self.entries.len());
                 let mut entry = FileEntry::new(id, path.clone(), size, now);
-                entry.dir_text = self.relative_dir(&path);
+                entry.dir_text = Self::relative_dir(&path);
                 self.entries.push(entry);
                 self.link_checksum(id, &path);
                 if self.compare_on_discover && self.entries.len() == 2 {
@@ -1112,9 +914,6 @@ impl HasherApp {
                         e.state = EntryState::Cancelled;
                     }
                 }
-                if self.shot.done_at.is_none() {
-                    self.shot.done_at = Some(now);
-                }
                 self.verdicts_dirty = true;
             }
         }
@@ -1124,64 +923,87 @@ impl HasherApp {
     // Verifica: hash incollato, file di checksum, confronto
     // -----------------------------------------------------------------------------------------
 
-    /// Carica un file di checksum e avvia la verifica dei file elencati.
-    pub(crate) fn load_checksum(&mut self, path: &Path) {
-        let loaded = match guard(|| checksum_file::load(path)) {
-            Ok(Ok(f)) => f,
-            Ok(Err(e)) => {
-                self.notify(ToastKind::Error, t!("toast.checksum_error", error = e.to_string()));
-                return;
+    /// Carica uno o più file di checksum e avvia la verifica dei file elencati, cercati fra
+    /// quelli rilasciati insieme (`batch`) e quelli già in elenco: per percorso relativo, poi per
+    /// percorso finale, infine per solo nome; gli altri risultano MANCANTI.
+    ///
+    /// Restituisce `false` se i file di checksum non sono utilizzabili (illeggibili o senza voci)
+    /// ma insieme a loro sono arrivati altri file: in tal caso il chiamante li calcola normalmente.
+    pub(crate) fn load_checksum(&mut self, checksums: Vec<ChecksumBytes>, batch: Vec<WebInput>) -> bool {
+        let mut pool: Vec<WebInput> = batch
+            .into_iter()
+            .filter(|i| !checksums.iter().any(|c| c.rel_path == i.rel_path))
+            .collect();
+        let others_in_batch = !pool.is_empty();
+        for e in &self.entries {
+            if let Some(w) = self.known.get(&e.path) {
+                if !pool.iter().any(|p| p.rel_path == w.rel_path) {
+                    pool.push(w.clone());
+                }
             }
-            Err(e) => {
-                self.notify(ToastKind::Error, t!("toast.checksum_error", error = e));
-                return;
-            }
-        };
-        let rows: Vec<ChecksumRow> = loaded
-            .entries
-            .iter()
-            .map(|entry| {
-                let p = Path::new(&entry.file_name);
-                let resolved = if p.is_absolute() {
-                    p.to_path_buf()
-                } else {
-                    loaded.base_dir.join(p)
-                };
-                let exists = resolved.is_file();
-                ChecksumRow {
-                    entry: entry.clone(),
-                    canonical: if exists { resolved.canonicalize().ok() } else { None },
+        }
+
+        let mut rows: Vec<ChecksumRow> = Vec::new();
+        let mut names: Vec<String> = Vec::new();
+        let mut first_path: Option<PathBuf> = None;
+        for cs in &checksums {
+            let bytes = match &cs.bytes {
+                Ok(b) => b,
+                Err(e) => {
+                    self.notify(ToastKind::Error, t!("toast.checksum_error", error = e.as_str()));
+                    continue;
+                }
+            };
+            let path = PathBuf::from(&cs.rel_path);
+            let loaded = checksum_file::parse_bytes(&path, bytes);
+            names.push(
+                path.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| cs.rel_path.clone()),
+            );
+            first_path.get_or_insert(path);
+            for entry in loaded.entries {
+                let (resolved, found) = resolve_checksum_entry(&loaded.base_dir, &entry.file_name, &pool);
+                rows.push(ChecksumRow {
+                    entry,
                     resolved,
                     file_id: None,
-                    status: if exists {
+                    status: if found {
                         CheckStatus::Pending
                     } else {
                         CheckStatus::Missing
                     },
-                }
-            })
-            .collect();
-        let mut paths: Vec<PathBuf> = rows
-            .iter()
-            .filter(|r| r.status == CheckStatus::Pending)
-            .map(|r| r.resolved.clone())
-            .collect();
-        paths.dedup();
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+                });
+            }
+        }
+        let Some(path) = first_path else {
+            return !others_in_batch;
+        };
+        if rows.is_empty() && others_in_batch {
+            self.notify(ToastKind::Warning, t!("toast.checksum_empty"));
+            return false;
+        }
+
+        let mut inputs: Vec<WebInput> = Vec::new();
+        for r in rows.iter().filter(|r| r.status == CheckStatus::Pending) {
+            if inputs.iter().any(|i| i.path() == r.resolved) {
+                continue;
+            }
+            if let Some(w) = pool.iter().find(|w| w.path() == r.resolved) {
+                inputs.push(w.clone());
+            }
+        }
         let total = rows.len();
         self.verify.checksum = Some(ChecksumSession {
-            path: path.to_path_buf(),
-            name,
+            path,
+            name: names.join(", "),
             rows,
         });
         self.verify_open = true;
         if total == 0 {
             self.notify(ToastKind::Warning, t!("toast.checksum_empty"));
         }
-        if paths.is_empty() {
+        if inputs.is_empty() {
             if let Some(s) = self.session.take() {
                 s.handle.cancel();
             }
@@ -1189,25 +1011,21 @@ impl HasherApp {
             self.index.clear();
             self.status = RunStatus::Idle;
         } else {
-            self.start_session(paths, StartMode::Checksum);
+            self.start_session(inputs, StartMode::Checksum, true);
             self.multi = true;
         }
         self.verdicts_dirty = true;
+        true
     }
 
     fn link_checksum(&mut self, id: FileId, path: &Path) {
         let Some(cs) = &mut self.verify.checksum else { return };
-        let mut canonical: Option<Option<PathBuf>> = None;
         for r in cs
             .rows
             .iter_mut()
             .filter(|r| r.file_id.is_none() && r.status == CheckStatus::Pending)
         {
-            let same = r.resolved == path || {
-                let c = canonical.get_or_insert_with(|| path.canonicalize().ok());
-                c.is_some() && *c == r.canonical
-            };
-            if same {
+            if r.resolved == path {
                 r.file_id = Some(id);
             }
         }
@@ -1348,31 +1166,10 @@ impl HasherApp {
 
     fn run_action(&mut self, ctx: &Context, action: Action) {
         match action {
-            Action::OpenFiles => {
-                let mut dlg = rfd::FileDialog::new().set_title(t!("menu.open_files"));
-                if let Some(dir) = self.inputs.first().and_then(|p| p.parent()) {
-                    dlg = dlg.set_directory(dir);
-                }
-                if let Some(files) = dlg.pick_files() {
-                    let mods = ctx.input(|i| i.modifiers);
-                    self.open_paths(files, mods);
-                }
-            }
-            Action::OpenFolder => {
-                if let Some(dir) = rfd::FileDialog::new().set_title(t!("menu.open_folder")).pick_folder() {
-                    self.open_paths(vec![dir], Modifiers::NONE);
-                }
-            }
-            Action::OpenChecksum => {
-                let exts: Vec<&str> = checksum_file::CHECKSUM_EXTENSIONS.to_vec();
-                if let Some(file) = rfd::FileDialog::new()
-                    .set_title(t!("menu.open_checksum"))
-                    .add_filter(t!("verify.checksum_filter"), &exts)
-                    .pick_file()
-                {
-                    self.load_checksum(&file);
-                }
-            }
+            // I file scelti arrivano più tardi come `InputBatch` (vedi `handle_input`).
+            Action::OpenFiles => web::picker::open(&self.bridge, PickKind::Files),
+            Action::OpenFolder => web::picker::open(&self.bridge, PickKind::Folder),
+            Action::OpenChecksum => web::picker::open(&self.bridge, PickKind::Checksum),
             Action::ShowExport => {
                 if self.any_done() {
                     self.ui
@@ -1407,7 +1204,6 @@ impl HasherApp {
                     ThemeMode::Light => ThemeMode::Dark,
                     ThemeMode::Dark => ThemeMode::System,
                 };
-                self.theme_override = None;
                 self.settings.theme = next;
                 if let Some(d) = &mut self.ui.settings_draft {
                     d.theme = next;
@@ -1422,7 +1218,7 @@ impl HasherApp {
                         StartMode::Normal
                     };
                     let multi = self.multi;
-                    self.start_session(self.inputs.clone(), mode);
+                    self.start_session(self.inputs.clone(), mode, multi);
                     self.multi = multi;
                 }
             }
@@ -1449,7 +1245,7 @@ impl HasherApp {
                 }
                 self.fix_column_algo();
             }
-            Action::Quit => ctx.send_viewport_cmd(ViewportCommand::Close),
+            Action::Install => web::install::install_app(ctx),
             Action::Copy { text, toast } => {
                 ctx.copy_text(text);
                 if !toast.is_empty() {
@@ -1468,11 +1264,6 @@ impl HasherApp {
                         ctx.copy_text(text.trim_end().to_owned());
                         widgets::toast(ctx, ToastKind::Success, t!("toast.copied_all"));
                     }
-                }
-            }
-            Action::OpenDir(dir) => {
-                if let Err(e) = open::that_detached(&dir) {
-                    widgets::toast(ctx, ToastKind::Error, t!("toast.open_dir_error", error = e.to_string()));
                 }
             }
             Action::RowClick { id, mods } => self.row_click(id, mods),
@@ -1496,11 +1287,11 @@ impl HasherApp {
         if self.is_running() {
             return;
         }
-        let paths: Vec<PathBuf> = self
+        let paths: Vec<WebInput> = self
             .entries
             .iter()
             .filter(|e| matches!(e.state, EntryState::Cancelled))
-            .map(|e| e.path.clone())
+            .filter_map(|e| self.known.get(&e.path).cloned())
             .collect();
         if paths.is_empty() {
             return;
@@ -1518,7 +1309,7 @@ impl HasherApp {
                 StartMode::Normal
             };
             let multi = self.multi;
-            self.start_session(inputs, mode);
+            self.start_session(inputs, mode, multi);
             self.multi = multi;
             return;
         }
@@ -1528,7 +1319,7 @@ impl HasherApp {
         } else {
             StartMode::Normal
         };
-        self.start_session_ext(paths, mode, true);
+        self.start_session_ext(paths, mode, true, true);
     }
 
     fn fix_column_algo(&mut self) {
@@ -1647,19 +1438,49 @@ impl HasherApp {
             }
         }
 
-        // File rilasciati sulla finestra.
-        let (dropped, mods) = ctx.input(|i| {
-            (
-                i.raw
-                    .dropped_files
-                    .iter()
-                    .map(|f| f.path().to_path_buf())
-                    .collect::<Vec<_>>(),
-                i.modifiers,
-            )
+        // Pulsante "Incolla": testo letto con `navigator.clipboard.readText()`.
+        let read = self.bridge.pasted.borrow_mut().take();
+        match read {
+            Some(Ok(s)) => {
+                self.verify_open = true;
+                self.verify.input = s.trim().to_owned();
+                self.verify.paste_replace = false;
+                self.verify.focus_request = true;
+            }
+            Some(Err(e)) => {
+                log::warn!("lettura degli appunti non riuscita: {e}");
+                self.verify.paste_replace = false;
+                self.verify.focus_request = true;
+                widgets::toast(ctx, ToastKind::Info, t!("toast.paste_unavailable"));
+            }
+            None => {}
+        }
+
+        // File rilasciati (trascinamento intercettato da `web::dnd`), scelti nei dialoghi o
+        // aperti dal sistema.
+        let mods = ctx.input(|i| i.modifiers);
+        loop {
+            let next = self.bridge.batches.borrow_mut().pop_front();
+            let Some(batch) = next else { break };
+            self.open_batch(batch, mods);
+        }
+        // Ripiego: file consegnati da eframe (browser senza `webkitGetAsEntry`).
+        let dropped: Vec<WebInput> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.web_file().cloned())
+                .map(|f| {
+                    let name = f.name();
+                    WebInput::new(f, name)
+                })
+                .collect()
         });
         if !dropped.is_empty() {
-            self.open_paths(dropped, mods);
+            let bridge = self.bridge.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                bridge.deliver(dropped, Some(mods), web::InputOrigin::Drop, false).await;
+            });
         }
     }
 
@@ -1675,7 +1496,6 @@ impl HasherApp {
             let window = self.settings.window;
             self.settings = draft;
             self.settings.window = window;
-            self.theme_override = None;
             if algos_changed {
                 self.actions.push(Action::ResetAlgos);
             }
@@ -1690,90 +1510,52 @@ impl HasherApp {
         }
     }
 
-    fn capture_window_state(&mut self, ctx: &Context) {
-        let (outer, inner, maximized, minimized) = ctx.input(|i| {
-            let vp = i.viewport();
-            (
-                vp.outer_rect,
-                vp.inner_rect,
-                vp.maximized.unwrap_or(false),
-                vp.minimized.unwrap_or(false),
-            )
-        });
-        if minimized {
-            return;
-        }
-        if maximized {
-            if let Some(w) = &mut self.window {
-                w.maximized = true;
-            }
-            return;
-        }
-        if let Some(inner) = inner {
-            let pos = outer.map(|o| o.min).unwrap_or(inner.min);
-            self.window = Some(WindowState {
-                x: pos.x,
-                y: pos.y,
-                width: inner.width(),
-                height: inner.height(),
-                maximized: false,
-            });
+    /// Esplorazione di cartelle trascinate ancora in corso.
+    pub(crate) fn is_exploring(&self) -> bool {
+        self.bridge.exploring.get() > 0
+    }
+}
+
+/// Risolve una voce di un file di checksum fra i file disponibili: percorso relativo alla
+/// cartella del file di checksum, poi stesso percorso finale (es. `sub/file` dentro
+/// `cartella/sub/file`), infine solo il nome. Restituisce il percorso e se il file è stato trovato.
+fn resolve_checksum_entry(base_dir: &Path, file_name: &str, pool: &[WebInput]) -> (PathBuf, bool) {
+    let mut parts: Vec<String> = Vec::new();
+    let base = base_dir.to_string_lossy();
+    for c in base
+        .split(['/', '\\'])
+        .chain(file_name.split(['/', '\\']))
+        .filter(|c| !c.is_empty() && *c != ".")
+    {
+        if c == ".." {
+            parts.pop();
+        } else {
+            parts.push(c.to_owned());
         }
     }
-
-    // -----------------------------------------------------------------------------------------
-    // Screenshot per i test headless
-    // -----------------------------------------------------------------------------------------
-
-    fn screenshot_hook(&mut self, ctx: &Context) {
-        let Some(path) = self.shot.path.clone() else { return };
-        let now = anim::now(ctx);
-        self.shot.frames += 1;
-        let started = *self.shot.started.get_or_insert(now);
-        if self.shot.cancel_early && self.shot.frames == 40 {
-            self.cancel();
-        }
-
-        let image = ctx.input(|i| {
-            i.events.iter().find_map(|e| match e {
-                Event::Screenshot { image, .. } => Some(image.clone()),
-                _ => None,
-            })
-        });
-        if let Some(image) = image {
-            let [w, h] = image.size;
-            let saved = image::RgbaImage::from_raw(w as u32, h as u32, image.as_raw().to_vec())
-                .map(|img| img.save_with_format(&path, image::ImageFormat::Png));
-            match saved {
-                Some(Ok(())) => log::info!("screenshot salvato in {}", path.display()),
-                Some(Err(e)) => log::error!("screenshot non salvato: {e}"),
-                None => log::error!("screenshot: dimensioni non valide"),
-            }
-            ctx.send_viewport_cmd(ViewportCommand::Close);
-            return;
-        }
-        if self.shot.requested {
-            ctx.request_repaint();
-            return;
-        }
-        let mut done_ready = !self.shot.wait_done || self.shot.done_at.is_some_and(|t| now - t > 0.9);
-        if done_ready && !self.shot.deferred.is_empty() {
-            for cmd in std::mem::take(&mut self.shot.deferred) {
-                self.run_deferred(&cmd);
-            }
-            self.shot.deferred_at = Some(now);
-            ctx.request_repaint();
-        }
-        if let Some(t) = self.shot.deferred_at {
-            done_ready = done_ready && now - t > 0.9;
-        }
-        let timeout = now - started > 45.0;
-        if self.shot.frames >= self.shot.after_frames && (done_ready || timeout) {
-            ctx.send_viewport_cmd(ViewportCommand::Screenshot(egui::UserData::default()));
-            self.shot.requested = true;
-        }
-        ctx.request_repaint();
+    let key = parts.join("/");
+    if let Some(w) = pool.iter().find(|w| w.rel_path == key) {
+        return (w.path(), true);
     }
+    let own: Vec<&str> = file_name
+        .split(['/', '\\'])
+        .filter(|c| !c.is_empty() && *c != "." && *c != "..")
+        .collect();
+    if own.len() > 1 {
+        let tail = format!("/{}", own.join("/"));
+        if let Some(w) = pool.iter().find(|w| w.rel_path.ends_with(&tail)) {
+            return (w.path(), true);
+        }
+    }
+    if let Some(name) = own.last() {
+        if let Some(w) = pool
+            .iter()
+            .find(|w| w.path().file_name().is_some_and(|n| n.to_string_lossy() == *name))
+        {
+            return (w.path(), true);
+        }
+    }
+    (PathBuf::from(key), false)
 }
 
 impl eframe::App for HasherApp {
@@ -1785,7 +1567,11 @@ impl eframe::App for HasherApp {
         let ctx = ui.ctx().clone();
         anim::set_enabled(&ctx, self.effective_animations());
         self.apply_theme(&ctx);
-        self.capture_window_state(&ctx);
+        self.bridge.walk.set(WalkOptions {
+            recurse: self.settings.recurse_folders,
+            include_hidden: self.settings.include_hidden,
+        });
+        self.can_install = web::install::can_install();
         self.handle_input(&ctx);
         self.refresh_verdicts();
         for (kind, text) in std::mem::take(&mut self.notices) {
@@ -1799,7 +1585,7 @@ impl eframe::App for HasherApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(p.bg).inner_margin(egui::Margin::same(16)))
             .show(ui, |ui| {
-                if self.entries.is_empty() && !self.is_running() {
+                if self.entries.is_empty() && !self.is_running() && !self.is_exploring() {
                     dropzone::empty_state(self, ui);
                 } else if self.entries.len() == 1 && !self.multi {
                     single::show(self, ui);
@@ -1811,81 +1597,17 @@ impl eframe::App for HasherApp {
         settings::window(self, &ctx);
         help::window(self, &ctx);
         export::window(self, &ctx);
-        dropzone::overlay(&ctx, self.shot.force_overlay);
+        dropzone::overlay(&ctx, self.bridge.drag_mods.get());
         widgets::show_toasts(&ctx, 56.0);
 
         self.process_actions(&ctx);
         self.refresh_verdicts();
         self.apply_theme(&ctx);
-        self.screenshot_hook(&ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Some(s) = self.session.take() {
             s.handle.cancel();
-        }
-        if self.shot.path.is_some() {
-            return;
-        }
-        if let Some(w) = self.window {
-            self.settings.window = Some(w);
-        }
-        if let Ok(Err(e)) = guard(|| self.settings.save()) {
-            log::warn!("salvataggio impostazioni all'uscita fallito: {e}");
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const SHA256_EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-
-    fn valid_hex(input: &str) -> Option<String> {
-        match HashInput::parse(input) {
-            HashInput::Valid { hex, .. } => Some(hex),
-            _ => None,
-        }
-    }
-
-    #[test]
-    fn parse_plain_and_grouped() {
-        assert_eq!(valid_hex(SHA256_EMPTY).as_deref(), Some(SHA256_EMPTY));
-        assert_eq!(valid_hex(&SHA256_EMPTY.to_uppercase()).as_deref(), Some(SHA256_EMPTY));
-        let grouped: String = SHA256_EMPTY
-            .as_bytes()
-            .chunks(8)
-            .map(|c| std::str::from_utf8(c).unwrap())
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert_eq!(valid_hex(&grouped).as_deref(), Some(SHA256_EMPTY));
-    }
-
-    #[test]
-    fn parse_checksum_lines() {
-        assert_eq!(
-            valid_hex(&format!("{SHA256_EMPTY}  empty.txt")).as_deref(),
-            Some(SHA256_EMPTY)
-        );
-        assert_eq!(
-            valid_hex(&format!("SHA256 (empty.txt) = {SHA256_EMPTY}")).as_deref(),
-            Some(SHA256_EMPTY)
-        );
-    }
-
-    #[test]
-    fn parse_errors() {
-        assert_eq!(HashInput::parse("   "), HashInput::Empty);
-        assert_eq!(HashInput::parse("hello world"), HashInput::NotHex);
-        assert_eq!(HashInput::parse("abcde"), HashInput::BadLength(5));
-    }
-
-    #[test]
-    fn candidates_by_length() {
-        match HashInput::parse("d41d8cd98f00b204e9800998ecf8427e") {
-            HashInput::Valid { candidates, .. } => assert!(candidates.contains(&Algo::Md5)),
-            other => panic!("unexpected {other:?}"),
         }
     }
 }

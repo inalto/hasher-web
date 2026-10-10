@@ -1,13 +1,14 @@
-//! Finestra di esportazione: scelta del formato, dialogo di salvataggio nativo, scrittura.
+//! Finestra di esportazione: scelta del formato, documento prodotto in memoria
+//! (`export_to_vec`) e offerto come download dal browser.
 
 use super::theme::{self, pal, RADIUS_WIDGET};
 use super::widgets::{self, Btn, ToastKind};
-use super::{guard, HasherApp};
-use crate::backend::algo::Algo;
-use crate::backend::export::{self, ExportFormat, ExportLabels, ExportOptions};
-use crate::backend::settings::Settings;
+use super::HasherApp;
+use crate::settings::Settings;
 use egui::{Align, Align2, Context, Id, Layout, RichText, Sense, Stroke, StrokeKind, Vec2};
 use egui_phosphor::regular as icons;
+use hasher_core::algo::Algo;
+use hasher_core::export::{export_to_vec, ExportFormat, ExportLabels, ExportOptions};
 use rust_i18n::t;
 
 /// Numero di formati "di base" + il file di checksum.
@@ -258,19 +259,6 @@ fn run_export(app: &mut HasherApp, ctx: &Context) {
         _ if results.len() == 1 => format!("{}.hasher.{ext}", results[0].info.name),
         _ => format!("hasher-{stamp}.{ext}"),
     };
-    let mut dlg = rfd::FileDialog::new()
-        .set_title(t!("export.dialog_title"))
-        .add_filter(t!(format!("export.format.{}", format.id())), &[ext])
-        .set_file_name(file_name);
-    if let Some(dir) = app.settings.last_export_dir.as_ref().filter(|d| d.is_dir()) {
-        dlg = dlg.set_directory(dir);
-    } else if let Some(dir) = results[0].info.path.parent() {
-        dlg = dlg.set_directory(dir);
-    }
-    let Some(mut path) = dlg.save_file() else { return };
-    if path.extension().is_none() {
-        path.set_extension(ext);
-    }
     let opts = ExportOptions {
         algos,
         uppercase_hex: app.settings.uppercase_hex,
@@ -281,22 +269,19 @@ fn run_export(app: &mut HasherApp, ctx: &Context) {
         generated_at: chrono::Local::now(),
         date_format: t!("export.date_format").into_owned(),
     };
-    let shown = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    match guard(|| export::export(&path, format, &results, &opts)) {
-        Ok(Ok(())) => {
-            widgets::toast(ctx, ToastKind::Success, t!("toast.exported", file = shown));
-            app.settings.last_export_format = Some(format);
-            app.settings.last_export_dir = path.parent().map(|p| p.to_path_buf());
-            app.save_settings(ctx, false);
-        }
-        Ok(Err(e)) => widgets::toast(
+    match export_to_vec(format, &results, &opts) {
+        Ok(bytes) => match crate::web::download(&file_name, format.mime(), &bytes) {
+            Ok(()) => {
+                widgets::toast(ctx, ToastKind::Success, t!("toast.exported", file = file_name));
+                app.settings.last_export_format = Some(format);
+                app.save_settings(ctx, false);
+            }
+            Err(e) => widgets::toast(ctx, ToastKind::Error, t!("toast.export_error", error = e)),
+        },
+        Err(e) => widgets::toast(
             ctx,
             ToastKind::Error,
             t!("toast.export_error", error = format!("{e:#}")),
         ),
-        Err(e) => widgets::toast(ctx, ToastKind::Error, t!("toast.export_error", error = e)),
     }
 }

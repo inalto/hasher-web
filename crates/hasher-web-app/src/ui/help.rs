@@ -119,7 +119,8 @@ fn guide(ui: &mut Ui) {
         (icons::LIST_CHECKS, "checksum"),
         (icons::GIT_DIFF, "compare"),
         (icons::EXPORT, "export"),
-        (icons::USB, "portable"),
+        (icons::LOCK_KEY, "privacy"),
+        (icons::BROWSER, "portable"),
     ];
     for (icon, key) in sections {
         guide_item(
@@ -223,9 +224,13 @@ fn about(ui: &mut Ui) {
                 .font(theme::font_medium(13.5))
                 .color(p.text),
         );
-        ui.hyperlink_to(
-            RichText::new(crate::COMPANY_URL).font(theme::font_regular(13.5)),
-            crate::COMPANY_URL,
+        // Nuova scheda: la pagina dell'app (o la PWA) resta aperta.
+        ui.add(
+            egui::Hyperlink::from_label_and_url(
+                RichText::new(crate::COMPANY_URL).font(theme::font_regular(13.5)),
+                crate::COMPANY_URL,
+            )
+            .open_in_new_tab(true),
         );
         ui.add_space(18.0);
     });
@@ -239,7 +244,8 @@ fn about(ui: &mut Ui) {
         ("crc32fast, crc, xxhash-rust", "MIT / Apache-2.0"),
         ("rust_xlsxwriter", "MIT / Apache-2.0"),
         ("docx-rs", "MIT"),
-        ("rfd, open, rust-i18n", "MIT"),
+        ("wasm-bindgen, web-sys, js-sys", "MIT / Apache-2.0"),
+        ("rust-i18n", "MIT"),
         ("Inter, JetBrains Mono", "SIL OFL 1.1"),
         ("Phosphor Icons", "MIT"),
     ];

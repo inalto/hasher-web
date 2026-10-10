@@ -20,12 +20,15 @@ pub(crate) fn show(app: &mut HasherApp, ui: &mut Ui) {
                 status_text(app, ui);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
-                    ui.add(egui::Hyperlink::from_label_and_url(
-                        RichText::new(t!("app.credit"))
-                            .font(theme::font_regular(12.0))
-                            .color(p.text_faint),
-                        crate::COMPANY_URL,
-                    ));
+                    ui.add(
+                        egui::Hyperlink::from_label_and_url(
+                            RichText::new(t!("app.credit"))
+                                .font(theme::font_regular(12.0))
+                                .color(p.text_faint),
+                            crate::COMPANY_URL,
+                        )
+                        .open_in_new_tab(true),
+                    );
                     if !app.is_running()
                         && app.cancelled_count() > 0
                         && ui
@@ -54,6 +57,12 @@ pub(crate) fn show(app: &mut HasherApp, ui: &mut Ui) {
 fn status_text(app: &HasherApp, ui: &mut Ui) {
     let p = pal(ui);
     let font = theme::font_medium(13.0);
+    if app.is_exploring() && !app.is_running() {
+        // Cartelle trascinate ancora in esplorazione (prima dell'avvio del calcolo).
+        anim::spinner_ring(ui, 16.0, p.primary);
+        ui.label(RichText::new(t!("status.scanning")).font(font).color(p.text));
+        return;
+    }
     match &app.status {
         RunStatus::Running => {
             anim::spinner_ring(ui, 16.0, p.primary);

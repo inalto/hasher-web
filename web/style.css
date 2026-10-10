@@ -1,6 +1,11 @@
 /* Pagina ospite dell'app egui: sfondo e canvas a tutto schermo, splash iniziale. */
 :root { color-scheme: light dark; --bg: #F4F7FB; --fg: #151F35; --muted: #5B6B82; --primary: #144781; }
-@media (prefers-color-scheme: dark) { :root { --bg: #0E1526; --fg: #E6ECF4; --muted: #9AAAC2; --primary: #4F86C6; } }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #0E1526; --fg: #E6ECF4; --muted: #9AAAC2; --primary: #4F86C6; }
+}
+/* Tema scelto nelle impostazioni dell'app (impostato da boot.js prima dell'avvio). */
+:root[data-theme="dark"] { color-scheme: dark; --bg: #0E1526; --fg: #E6ECF4; --muted: #9AAAC2; --primary: #4F86C6; }
+:root[data-theme="light"] { color-scheme: light; }
 html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
   font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 #hasher_canvas { position: absolute; inset: 0; width: 100%; height: 100%; outline: none; touch-action: none; }

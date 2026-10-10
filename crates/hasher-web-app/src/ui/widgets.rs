@@ -3,13 +3,13 @@
 
 use super::anim;
 use super::theme::{self, pal, Palette, RADIUS_CARD, RADIUS_WIDGET};
-use crate::backend::algo::Algo;
 use egui::text::LayoutJob;
 use egui::{
     Align, Align2, Color32, Context, CornerRadius, Frame, Galley, Id, InnerResponse, Label, Layout, Margin, Order,
     Rect, Response, RichText, Sense, Shadow, Stroke, StrokeKind, Ui, Vec2, Widget, WidgetText,
 };
 use egui_phosphor::regular as icons;
+use hasher_core::algo::Algo;
 use rust_i18n::t;
 use std::sync::Arc;
 

@@ -2,7 +2,7 @@
 //!
 //! Nessun colore è definito fuori da questo file: le viste leggono i token con [`pal`].
 
-use crate::backend::settings::ThemeMode;
+use crate::settings::ThemeMode;
 use egui::{
     Color32, Context, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Shadow, Stroke, Style,
     TextStyle, Theme, ThemePreference, Visuals,

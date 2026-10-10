@@ -4,11 +4,9 @@ use super::anim;
 use super::theme::{self, pal, RADIUS_WIDGET};
 use super::widgets::{self, Btn, IconButton};
 use super::{Action, CheckStatus, HashInput, HasherApp};
-use crate::backend::algo::Algo;
-use egui::{
-    Align, Color32, Frame, Id, Label, Layout, Margin, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, ViewportCommand,
-};
+use egui::{Align, Color32, Frame, Id, Label, Layout, Margin, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2};
 use egui_phosphor::regular as icons;
+use hasher_core::algo::Algo;
 use rust_i18n::t;
 
 pub(crate) fn panel(app: &mut HasherApp, ui: &mut Ui) {
@@ -115,8 +113,9 @@ fn content(app: &mut HasherApp, ui: &mut Ui) {
             .add(Btn::secondary(t!("verify.paste")).icon(icons::CLIPBOARD_TEXT).small())
             .clicked()
         {
+            // Sul web `ViewportCommand::RequestPaste` non esiste: `navigator.clipboard.readText()`.
             app.verify.paste_replace = true;
-            ui.ctx().send_viewport_cmd(ViewportCommand::RequestPaste);
+            crate::web::clipboard::request_paste(&app.bridge);
         }
         if !app.verify.input.is_empty() && ui.add(Btn::ghost(t!("verify.clear")).icon(icons::X).small()).clicked() {
             app.verify.input.clear();

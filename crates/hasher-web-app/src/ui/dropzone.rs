@@ -5,7 +5,8 @@ use super::theme::{self, pal, pal_ctx};
 use super::widgets::{self, Btn};
 use super::{Action, HasherApp};
 use egui::{
-    Align, Align2, Context, Id, LayerId, Layout, Order, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, UiBuilder, Vec2,
+    Align, Align2, Context, Id, LayerId, Layout, Modifiers, Order, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui,
+    UiBuilder, Vec2,
 };
 use egui_phosphor::regular as icons;
 use rust_i18n::t;
@@ -58,7 +59,8 @@ pub(crate) fn empty_state(app: &mut HasherApp, ui: &mut Ui) {
     dashed_rounded_rect(&mut shapes, zone.shrink(1.0), 20.0, Stroke::new(2.0, border), 0.0);
     painter.extend(shapes);
 
-    let content_h = 380.0;
+    let install = app.can_install;
+    let content_h = if install { 424.0 } else { 380.0 };
     let top = zone.center().y - content_h / 2.0;
     let inner = Rect::from_min_max(
         Pos2::new(zone.left() + 24.0, top.max(zone.top() + 12.0)),
@@ -151,6 +153,18 @@ pub(crate) fn empty_state(app: &mut HasherApp, ui: &mut Ui) {
                 });
                 ui.add_space(2.0);
             }
+
+            // Installazione come app (solo se il browser la offre).
+            if install {
+                ui.add_space(14.0);
+                if ui
+                    .add(Btn::ghost(t!("drop.install")).icon(icons::DOWNLOAD_SIMPLE).small())
+                    .on_hover_text(t!("drop.install_tooltip"))
+                    .clicked()
+                {
+                    app.actions.push(Action::Install);
+                }
+            }
         },
     );
 
@@ -161,9 +175,10 @@ pub(crate) fn empty_state(app: &mut HasherApp, ui: &mut Ui) {
 }
 
 /// Sovrimpressione a tutta finestra mentre l'utente trascina file sopra l'app.
-pub(crate) fn overlay(ctx: &Context, forced: bool) {
-    let (count, mods) = ctx.input(|i| (i.raw.hovered_files.len(), i.modifiers));
-    let count = if forced { count.max(1) } else { count };
+/// `mods`: modificatori letti dal `dragover` (durante il trascinamento il browser non invia
+/// eventi di tastiera a egui).
+pub(crate) fn overlay(ctx: &Context, mods: Modifiers) {
+    let count = ctx.input(|i| i.raw.hovered_files.len());
     let t = anim::fade_in(ctx, Id::new("hasher.drop.overlay"), count > 0);
     if t <= 0.001 {
         return;

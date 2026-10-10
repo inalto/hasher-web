@@ -1,6 +1,13 @@
 // Avvio della PWA: service worker, prompt di installazione, file aperti dal sistema, app wasm.
 // Tutto resta nel browser: nessuna richiesta di rete oltre ai file statici dell'app.
 
+// --- Tema scelto nelle impostazioni (`localStorage["hasher.settings"]`): lo splash e lo sfondo
+// della pagina lo rispettano già prima che l'app wasm sia avviata.
+try {
+  const theme = JSON.parse(localStorage.getItem('hasher.settings') || '{}').theme;
+  if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+} catch (_) { /* impostazioni assenti o non valide: tema di sistema */ }
+
 // --- Installazione (Chrome/Edge): il prompt viene conservato e mostrato su richiesta dell'app.
 let installPrompt = null;
 window.addEventListener('beforeinstallprompt', (e) => {

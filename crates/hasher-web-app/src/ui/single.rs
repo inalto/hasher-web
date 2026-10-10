@@ -4,9 +4,9 @@ use super::format;
 use super::theme::{self, pal};
 use super::widgets::{self, Btn, HashState, InfoItem, ToastKind};
 use super::{Action, EntryState, FileEntry, HasherApp};
-use crate::backend::fileinfo::FileInfo;
 use egui::{Align, Label, Layout, RichText, ScrollArea, Ui, Vec2};
 use egui_phosphor::regular as icons;
+use hasher_core::fileinfo::FileInfo;
 use rust_i18n::t;
 
 /// Colonna centrata di larghezza massima `max_w`.
@@ -27,6 +27,9 @@ pub(crate) fn centered_column<R>(ui: &mut Ui, max_w: f32, add: impl FnOnce(&mut 
 }
 
 /// Voci della griglia informazioni per un file (con o senza metadati completi).
+///
+/// Sul web il browser fornisce solo dimensione e data di modifica: le voci assenti (creazione,
+/// attributi, permessi) non vengono mostrate, così la griglia ha due sole caselle.
 pub(crate) fn info_items(entry: &FileEntry) -> Vec<InfoItem> {
     let info: Option<&FileInfo> = entry.result().map(|r| &r.info);
     let pending = || super::PENDING_VALUE.to_owned();
@@ -36,63 +39,67 @@ pub(crate) fn info_items(entry: &FileEntry) -> Vec<InfoItem> {
         value: format::size(entry.size),
         sub: Some(format::bytes_exact(entry.size)),
     }];
-    items.push(InfoItem {
-        icon: icons::CALENDAR_PLUS,
-        label: t!("single.created").into_owned(),
-        value: info.map_or_else(pending, |i| format::datetime(i.created)),
-        sub: None,
-    });
-    items.push(InfoItem {
-        icon: icons::CALENDAR_CHECK,
-        label: t!("single.modified").into_owned(),
-        value: info.map_or_else(pending, |i| format::datetime(i.modified)),
-        sub: None,
-    });
-    let (value, sub) = match info {
-        Some(i) => {
-            let names: Vec<String> = i
-                .attributes
-                .iter()
-                .map(|a| t!(format!("attr.{}", a.id())).into_owned())
-                .collect();
-            let value = if names.is_empty() {
-                t!("single.no_attributes").into_owned()
-            } else {
-                names.join(", ")
-            };
-            let mut sub_parts = Vec::new();
-            let short = i.attributes_short();
-            if !short.is_empty() {
-                sub_parts.push(short);
-            }
-            if let Some(m) = i.unix_mode_string() {
-                sub_parts.push(m);
-            }
-            if let Some(m) = i.unix_mode {
-                sub_parts.push(format!("{:04o}", m & 0o7777));
-            }
-            (
-                value,
-                if sub_parts.is_empty() {
-                    None
-                } else {
-                    Some(sub_parts.join(" · "))
-                },
-            )
+    if let Some(created) = info.and_then(|i| i.created) {
+        items.push(InfoItem {
+            icon: icons::CALENDAR_PLUS,
+            label: t!("single.created").into_owned(),
+            value: format::datetime(Some(created)),
+            sub: None,
+        });
+    }
+    match info {
+        None => items.push(InfoItem {
+            icon: icons::CALENDAR_CHECK,
+            label: t!("single.modified").into_owned(),
+            value: pending(),
+            sub: None,
+        }),
+        Some(i) if i.modified.is_some() => items.push(InfoItem {
+            icon: icons::CALENDAR_CHECK,
+            label: t!("single.modified").into_owned(),
+            value: format::datetime(i.modified),
+            sub: None,
+        }),
+        Some(_) => {}
+    }
+    if let Some(i) = info.filter(|i| !i.attributes.is_empty() || i.unix_mode.is_some()) {
+        let names: Vec<String> = i
+            .attributes
+            .iter()
+            .map(|a| t!(format!("attr.{}", a.id())).into_owned())
+            .collect();
+        let value = if names.is_empty() {
+            t!("single.no_attributes").into_owned()
+        } else {
+            names.join(", ")
+        };
+        let mut sub_parts = Vec::new();
+        let short = i.attributes_short();
+        if !short.is_empty() {
+            sub_parts.push(short);
         }
-        None => (pending(), None),
-    };
-    items.push(InfoItem {
-        icon: icons::TAG,
-        label: t!("single.attributes").into_owned(),
-        value,
-        sub,
-    });
+        if let Some(m) = i.unix_mode_string() {
+            sub_parts.push(m);
+        }
+        if let Some(m) = i.unix_mode {
+            sub_parts.push(format!("{:04o}", m & 0o7777));
+        }
+        items.push(InfoItem {
+            icon: icons::TAG,
+            label: t!("single.attributes").into_owned(),
+            value,
+            sub: if sub_parts.is_empty() {
+                None
+            } else {
+                Some(sub_parts.join(" · "))
+            },
+        });
+    }
     items
 }
 
 /// Stato della riga hash per un algoritmo di un file.
-pub(crate) fn hash_state<'a>(app: &HasherApp, entry: &'a FileEntry, algo: crate::backend::algo::Algo) -> HashState<'a> {
+pub(crate) fn hash_state<'a>(app: &HasherApp, entry: &'a FileEntry, algo: hasher_core::algo::Algo) -> HashState<'a> {
     match &entry.state {
         EntryState::Queued => HashState::Pending,
         EntryState::Computing { .. } => HashState::Computing,
@@ -168,30 +175,15 @@ fn header_card(app: &mut HasherApp, ui: &mut Ui) {
                     )
                     .wrap(),
                 );
-                ui.add(
-                    Label::new(
-                        RichText::new(entry.path.to_string_lossy())
-                            .font(theme::font_regular(13.0))
-                            .color(p.text_muted),
-                    )
-                    .wrap(),
-                );
+                // Percorso relativo alla cartella trascinata (per un file singolo coincide col nome).
+                let rel = entry.path.to_string_lossy();
+                if rel != entry.name.as_str() {
+                    ui.add(Label::new(RichText::new(rel).font(theme::font_regular(13.0)).color(p.text_muted)).wrap());
+                }
                 ui.add_space(4.0);
                 status_badge(entry, ui);
             });
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                if let Some(parent) = entry.path.parent() {
-                    if ui
-                        .add(
-                            Btn::secondary(t!("single.open_folder"))
-                                .icon(icons::FOLDER_OPEN)
-                                .small(),
-                        )
-                        .clicked()
-                    {
-                        app.actions.push(Action::OpenDir(parent.to_path_buf()));
-                    }
-                }
                 if matches!(entry.state, EntryState::Cancelled)
                     && ui
                         .add(Btn::primary(t!("app.resume")).icon(icons::ARROW_CLOCKWISE).small())
