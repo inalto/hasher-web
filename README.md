@@ -10,11 +10,16 @@
 </p>
 
 <p align="center">
+  <b>Demo in funzione:</b> <a href="https://hash.martini-multimedia.net">hash.martini-multimedia.net</a>
+</p>
+
+<p align="center">
   <b>English:</b> Hasher Web is the web (PWA) edition of <a href="https://github.com/inalto/hasher">Hasher</a>, the hash
   calculator and verifier by Martini Multimedia s.a.s. All hashing runs <b>inside your browser</b> (Rust compiled to
   WebAssembly, in Web Workers): files are never uploaded. It ships as a tiny container image
   (<code>ghcr.io/inalto/hasher-web</code>) that serves static files behind your HTTPS reverse proxy, and it can be
-  installed as an app from Chrome or Edge. The deployment guide (in Italian) is
+  installed as an app from Chrome or Edge. A running demo is at <a href="https://hash.martini-multimedia.net">hash.martini-multimedia.net</a>.
+  The deployment guide (in Italian) is
   <a href="docs/DEPLOY.md">docs/DEPLOY.md</a>; ready-made nginx, Caddy, Traefik and Apache examples are in
   <a href="deploy/">deploy/</a>.
 </p>
@@ -71,6 +76,9 @@ caricato nulla (puoi verificarlo dagli strumenti di rete del browser). Le impost
 tuo browser.
 
 ## Avvio rapido
+
+Vuoi solo provarlo? Una demo è in funzione su <https://hash.martini-multimedia.net>: apri la pagina e trascina un file
+(gli hash vengono calcolati sul tuo dispositivo, nessun file viene caricato). Per ospitarlo da te:
 
 ```sh
 docker run -d --name hasher-web --restart unless-stopped \
